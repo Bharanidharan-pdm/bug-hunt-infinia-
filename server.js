@@ -526,6 +526,17 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', '403.html'));
 });
 
-seed().then(() => {
-  app.listen(PORT, () => console.log(`BUG HUNT live on http://localhost:${PORT}\nDEMO admin: ${process.env.DEMO_ADMIN_EMAIL || 'admin@bughunt.com'} / ${process.env.DEMO_ADMIN_PASSWORD || 'admin123'}`));
-});
+seed()
+  .then(() => {
+    if (require.main === module) {
+      // Local / bare-metal run: `npm start` / `node server.js`
+      app.listen(PORT, () => console.log(`BUG HUNT live on http://localhost:${PORT}\nDEMO admin: ${process.env.DEMO_ADMIN_EMAIL || 'admin@bughunt.com'} / ${process.env.DEMO_ADMIN_PASSWORD || 'admin123'}`));
+    } else {
+      console.log('BUG HUNT app loaded (serverless export – no listen)');
+    }
+  })
+  .catch((e) => { console.error('BUG HUNT seed failed:', e); });
+
+// Vercel / serverless: export the Express app as the request handler.
+// (`vercel.json` routes all traffic here via the @vercel/node runtime.)
+module.exports = app;

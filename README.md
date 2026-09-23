@@ -54,6 +54,29 @@ Scoring is backend-only: `score = round(points × passed/total)`, capped at ques
 3. Set `DATABASE_URL`, strong `JWT_SECRET`, `MOCK_NON_PYTHON=false` + sandbox executor.
 4. Put the app behind HTTPS, disable demo seeds.
 
+## Deploy on Vercel
+
+```bash
+npm install           # installs deps incl. child_process + vm
+vercel login          # once
+vercel --prod         # deploy (dashboard import from GitHub also works)
+```
+
+Things to configure in the Vercel project (Project → Settings → Environment Variables):
+
+| Key | Example | Note |
+|---|---|---|
+| `JWT_SECRET` | long random string ≥32 chars | **required** – use a fresh secret, never the dev one |
+| `JWT_EXPIRES_IN` | `12h` | optional |
+| `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD` | `admin@bughunt.com` / strong password | change in production |
+| `TEAM_EMAIL_DOMAIN` | `sasurie.com` | participant registration domain |
+| `EXEC_TIMEOUT_MS` | `5000` | code-exec timeout |
+| `MOCK_NON_PYTHON` | `true` | keep `true` on Vercel – Python/`child_process` is not available in the Node serverless runtime; JS (`vm`) runs, C/C++/Java use the DEMO mock evaluator |
+
+**Important caveats on Vercel (serverless):**
+- Storage is **ephemeral** — the file JSON store (`data/db.json`) resets on cold starts/redeploys. For a real event, wire up a persistent Postgres store (see `schema.sql` / "Production (PostgreSQL)") via a provider like Neon/Neon + Vercel Postgres and set `DATABASE_URL`.
+- Python submissions return a clean "Python unavailable" error on Vercel. Use the JS/`vm` path or the mock evaluator for demos.
+
 ## Project layout
 
 ```
