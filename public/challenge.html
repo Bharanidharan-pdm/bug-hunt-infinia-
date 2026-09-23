@@ -1,20 +1,20 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Debug — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
+<title>Debug — BUG HUNT</title><link rel="stylesheet" href="css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script></head>
 <body><div class="bg-grid"></div>
 <div class="app">
 <aside class="side">
-<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
-<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
-<a href="/challenges.html" class="on"><i data-lucide="code-2"></i> Challenges</a>
-<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
-<a href="/profile.html"><i data-lucide="users"></i> Team Profile</a>
-<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a class="brand" href="index.html" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="challenges.html" class="on"><i data-lucide="code-2"></i> Challenges</a>
+<a href="submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="profile.html"><i data-lucide="users"></i> Team Profile</a>
+<a href="rules.html"><i data-lucide="scroll-text"></i> Rules</a>
 <a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
 </aside>
 <div class="main" style="max-width:1400px">
 <div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
-<div><h1 id="title">Loading…</h1><p><a href="/challenges.html">← All challenges</a></p></div>
+<div><h1 id="title">Loading…</h1><p><a href="challenges.html">← All challenges</a></p></div>
 <div style="margin-left:auto" class="timer" id="timer">--:--</div></div>
 <div class="ide">
 <div class="card qpane">
@@ -38,7 +38,7 @@
 </div></div>
 <div class="modal" id="confirm"><div class="box"><h3 style="margin-top:0">Submit solution?</h3><p class="mut small">Are you sure you want to submit this solution? It will be evaluated against all hidden test cases.</p>
 <div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn ghost sm" id="cancel">Cancel</button><button class="btn pri sm" id="yes">Submit</button></div></div></div>
-<script src="/js/common.js"></script>
+<script src="js/common.js"></script>
 <script>
 let Q, editor, dead = false, remaining = 0, tickInt = null;
 const qid = new URLSearchParams(location.search).get('id');
@@ -47,7 +47,7 @@ function lock(msg) { dead = true; clearInterval(tickInt); $('#timer').textConten
 function drawTimer() { const m = Math.floor(remaining / 60), s = remaining % 60; $('#timer').textContent = 'TIME LEFT: ' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'); if (remaining <= 60) $('#timer').classList.add('dead'); }
 (async () => {
   const me = await guardTeam(); if (!me) return;
-  if (!qid) { location.href = '/challenges.html'; return; }
+  if (!qid) { location.href = 'challenges.html'; return; }
   const { question } = await authed('/api/team/questions/' + qid).catch(e => { toast(e.message, 'err'); throw e; });
   Q = question;
   $('#title').textContent = question.title;
@@ -87,7 +87,7 @@ function drawTimer() { const m = Math.floor(remaining / 60), s = remaining % 60;
     $('#confirm').classList.remove('open');
     try { const r = await authed('/api/team/questions/' + qid + '/submit', { method: 'POST', body: JSON.stringify({ code: editor.getValue() }) });
       localStorage.removeItem('bh_code_' + qid);
-      $('#results').innerHTML = `<div class="card" style="border-color:rgba(34,197,94,.4)"><h3 style="color:#86efac;margin-top:0">Submission Successful</h3><p class="small">Question: <b>${esc(r.question)}</b></p><p class="small">Passed: <b>${r.passed}/${r.total}</b></p><p class="small">Score: <b>${r.score}/${r.max}</b> · ${esc(r.status)}</p><p class="mut small">Submission Time: ${fmtTime(r.submitted_at)} · <a href="/submissions.html">View My Submissions</a></p></div>`; toast(`Scored ${r.score}/${r.max}`, 'ok');
+      $('#results').innerHTML = `<div class="card" style="border-color:rgba(34,197,94,.4)"><h3 style="color:#86efac;margin-top:0">Submission Successful</h3><p class="small">Question: <b>${esc(r.question)}</b></p><p class="small">Passed: <b>${r.passed}/${r.total}</b></p><p class="small">Score: <b>${r.score}/${r.max}</b> · ${esc(r.status)}</p><p class="mut small">Submission Time: ${fmtTime(r.submitted_at)} · <a href="submissions.html">View My Submissions</a></p></div>`; toast(`Scored ${r.score}/${r.max}`, 'ok');
     } catch (e) { if (/TIME'S UP/i.test(e.message)) lock(e.message); else toast(e.message, 'err'); }
   };
 })();

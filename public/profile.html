@@ -1,14 +1,14 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Team Profile — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<title>Team Profile — BUG HUNT</title><link rel="stylesheet" href="css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
 <body><div class="bg-grid"></div>
 <div class="app">
 <aside class="side">
-<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
-<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
-<a href="/challenges.html"><i data-lucide="code-2"></i> Challenges</a>
-<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
-<a href="/profile.html" class="on"><i data-lucide="users"></i> Team Profile</a>
-<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a class="brand" href="index.html" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="challenges.html"><i data-lucide="code-2"></i> Challenges</a>
+<a href="submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="profile.html" class="on"><i data-lucide="users"></i> Team Profile</a>
+<a href="rules.html"><i data-lucide="scroll-text"></i> Rules</a>
 <a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
 </aside>
 <div class="main">
@@ -21,7 +21,7 @@
 <div style="display:flex;gap:10px"><input id="tname"><button class="btn pri sm" id="save">Save</button></div>
 <p class="small mut" id="lockmsg"></p></div>
 </div></div>
-<script src="/js/common.js"></script>
+<script src="js/common.js"></script>
 <script>
 (async () => {
   const me = await guardTeam(); if (!me) return;

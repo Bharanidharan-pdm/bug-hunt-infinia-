@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Login — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<title>Admin Login — BUG HUNT</title><link rel="stylesheet" href="../css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
 <body><div class="bg-grid"></div>
-<nav class="topnav"><div class="wrap"><a class="brand" href="/"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>ADMIN CONSOLE</small></span></a></div></nav>
+<nav class="topnav"><div class="wrap"><a class="brand" href="../index.html"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>ADMIN CONSOLE</small></span></a></div></nav>
 <div class="wrap"><div class="card form-card" style="max-width:460px">
 <h2 style="margin:0"><i data-lucide="shield"></i> Admin Login</h2><p class="mut small">Organizers only. Participants get <b>403 – Access Denied</b> here.</p>
 <label>Admin Email</label><input id="email" placeholder="admin@bughunt.com">
@@ -10,12 +10,12 @@
 <button class="btn pri" id="go" style="width:100%;justify-content:center;margin-top:16px">Login to Console</button>
 <p class="small mut" style="text-align:center">DEMO admin: <code>admin@bughunt.com</code> / <code>admin123</code></p>
 </div></div>
-<script src="/js/common.js"></script>
+<script src="../js/common.js"></script>
 <script>
 icons();
 async function go(){ $('#err').textContent='';
   try{ const r=await api('/api/auth/admin-login',{method:'POST',body:JSON.stringify({email:$('#email').value,password:$('#pw').value})});
-    localStorage.setItem('bh_admin_token',r.token); location.href='/admin/dashboard.html';
+    localStorage.setItem('bh_admin_token',r.token); location.href='dashboard.html';
   }catch(e){ $('#err').textContent=e.message; } }
 $('#go').onclick=go; $('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
 </script></body></html>

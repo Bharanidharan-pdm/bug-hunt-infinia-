@@ -1,11 +1,11 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Console — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
+<title>Admin Console — BUG HUNT</title><link rel="stylesheet" href="../css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
 <style>.tab{display:none}.tab.on{display:block}</style></head>
 <body><div class="bg-grid"></div>
 <div class="app">
 <aside class="side">
-<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>ADMIN CONSOLE</small></span></a>
+<a class="brand" href="../index.html" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>ADMIN CONSOLE</small></span></a>
 <a href="#" data-tab="dash" class="on"><i data-lucide="layout-dashboard"></i> Dashboard</a>
 <a href="#" data-tab="qs"><i data-lucide="code-2"></i> Questions</a>
 <a href="#" data-tab="teams"><i data-lucide="users"></i> Teams</a>
@@ -88,7 +88,7 @@
 </div></div>
 <div class="modal" id="del"><div class="box"><h3 style="margin-top:0">Delete question?</h3><p class="mut small">This removes the question, its hidden test cases and links. Submissions are kept. This cannot be undone.</p>
 <div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn ghost sm" id="delNo">Cancel</button><button class="btn danger sm" id="delYes">Delete</button></div></div></div>
-<script src="/js/common.js"></script>
+<script src="../js/common.js"></script>
 <script>
 let editingId = null, delId = null, edB = null, edS = null;
 const tabs = $$('.side [data-tab]');
@@ -179,7 +179,7 @@ async function loadSettings() {
   $('#s_status').value = settings.status || 'live'; $('#s_multi').value = settings.allow_multiple_submissions ? '1' : '0'; $('#s_edit').value = settings.allow_profile_edit ? '1' : '0';
 }
 (async () => {
-  try { await authed('/api/admin/stats'); } catch { document.body.innerHTML = '<div class="wrap" style="padding:80px 20px;text-align:center"><h1>403 – Access Denied</h1><p class="mut">Admins only. <a href="/admin/login.html">Admin login</a></p></div>'; return; }
+  try { await authed('/api/admin/stats'); } catch { document.body.innerHTML = '<div class="wrap" style="padding:80px 20px;text-align:center"><h1>403 – Access Denied</h1><p class="mut">Admins only. <a href="login.html">Admin login</a></p></div>'; return; }
   await Promise.all([loadDash(), loadQs(), loadTeams(), loadSubs(), loadLb(), loadSettings()]);
   icons();
   $('#newq').onclick = () => openForm(null, false);

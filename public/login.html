@@ -1,24 +1,24 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Team Login — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<title>Team Login — BUG HUNT</title><link rel="stylesheet" href="css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
 <body><div class="bg-grid"></div>
-<nav class="topnav"><div class="wrap"><a class="brand" href="/"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>DEBUG COMPETITION</small></span></a>
-<div class="navlinks"><a href="/register.html">Register Team</a><a href="/admin/login.html">Admin</a></div></div></nav>
+<nav class="topnav"><div class="wrap"><a class="brand" href="index.html"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>DEBUG COMPETITION</small></span></a>
+<div class="navlinks"><a href="register.html">Register Team</a><a href="admin/login.html">Admin</a></div></div></nav>
 <div class="wrap"><div class="card form-card" style="max-width:480px">
 <h2 style="margin:0">Team Login</h2><p class="mut small">One account per 2-member team. Welcome back, hunters.</p>
 <label>Team Email / Team ID <span class="mut">(@sasurie.com only)</span></label><input id="email" placeholder="codewarriors@sasurie.com" autocomplete="username">
 <label>Password</label><input id="pw" type="password" placeholder="••••••••" autocomplete="current-password">
 <div id="err" class="small" style="color:#fca5a5;margin-top:10px"></div>
 <button class="btn pri" id="go" style="width:100%;justify-content:center;margin-top:16px"><i data-lucide="log-in"></i> Login as Team</button>
-<p class="small mut" style="text-align:center">No team yet? <a href="/register.html">Register your 2-member team</a></p>
+<p class="small mut" style="text-align:center">No team yet? <a href="register.html">Register your 2-member team</a></p>
 <p class="small mut" style="text-align:center">Use your registered @sasurie.com team account.</p>
 </div></div>
-<script src="/js/common.js"></script>
+<script src="js/common.js"></script>
 <script>
 icons();
 async function go(){
   $('#err').textContent='';
   try{ const r=await api('/api/auth/team-login',{method:'POST',body:JSON.stringify({login_email:$('#email').value,password:$('#pw').value})});
-    localStorage.setItem('bh_team_token',r.token); location.href='/dashboard.html';
+    localStorage.setItem('bh_team_token',r.token); location.href='dashboard.html';
   }catch(e){ $('#err').textContent=e.message; }
 }
 $('#go').onclick=go; $('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')go();});

@@ -22,9 +22,15 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 const EXEC_TIMEOUT_MS = parseInt(process.env.EXEC_TIMEOUT_MS || '5000', 10);
 const MOCK_NON_PYTHON = (process.env.MOCK_NON_PYTHON || 'true') === 'true';
 
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// Vercel serverless filesystem is read-only except /tmp.
+// Locally use ./data/db.json, on Vercel use /tmp/bughunt-db.json (ephemeral)
+// + in-memory fallback so UI never crashes with EROFS.
+const IS_VERCEL = !!process.env.VERCEL;
+const DATA_DIR = IS_VERCEL ? require('os').tmpdir() : path.join(__dirname, 'data');
+const DB_FILE = path.join(DATA_DIR, IS_VERCEL ? 'bughunt-db.json' : 'db.json');
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) { console.warn('DATA_DIR init skipped:', e.message); }
 
 const uid = (p = 'id') => p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 const nowISO = () => new Date().toISOString();
@@ -47,13 +53,16 @@ function defaultDB() {
 }
 function loadDB() {
   try {
-    if (!fs.existsSync(DB_FILE)) { const d = defaultDB(); fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2)); return d; }
+    if (!fs.existsSync(DB_FILE)) { const d = defaultDB(); try { fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2)); } catch {} return d; }
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     return Object.assign(defaultDB(), d);
-  } catch { const d = defaultDB(); fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2)); return d; }
+  } catch { return defaultDB(); }
 }
 let db = loadDB();
-function save() { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+function save() {
+  try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+  catch (e) { console.warn('DB save skipped (ephemeral FS):', e.message); }
+}
 
 // ---------- seed ----------
 async function seed() {
@@ -204,6 +213,14 @@ async function evaluate(question, code) {
     let r;
     if (lang === 'Python') r = await runPython(code, tc.input_data);
     else r = await runJS(code, tc.input_data); // JavaScript + fallback
+    if (r.error && /python unavailable/i.test(String(r.error))) {
+      // No Python runtime (e.g. Vercel serverless) -> DEMO mock fallback,
+      // clearly labelled mock:true so Run/Submit UI still works for demos.
+      const m = mockEvaluate(question, code, tcs);
+      let passed = 0;
+      tcs.forEach((tc2, i) => { const p = m[i].pass; if (p) passed++; results.push({ pass: p, mock: true }); });
+      return { results, passed, total: tcs.length, execMs: Date.now() - t0, mock: true };
+    }
     const pass = !r.error && normOut(r.output) === normOut(tc.expected_output);
     results.push({ pass, mock: false });
   }
@@ -518,12 +535,16 @@ app.put('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
 
 // ----- static + guards -----
 // Friendly 403 page for participants hitting /admin/* without admin token is enforced client-side + API-side.
+// NOTE: express.static must come before the fallback so /css/style.css and /js/common.js
+// always resolve with correct MIME — otherwise UI/UX breaks on Vercel.
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/admin', (req, res) => res.redirect('/admin/login.html'));
 app.get('/admin/', (req, res) => res.redirect('/admin/login.html'));
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
-  res.sendFile(path.join(__dirname, 'public', '403.html'));
+  // Missing static asset (css/js/img) -> proper 404, not 403 page (prevents broken UI masking)
+  if (/\.(css|js|map|png|jpg|jpeg|svg|ico|woff2?|ttf)$/i.test(req.path)) return res.status(404).end();
+  res.status(404).sendFile(path.join(__dirname, 'public', '403.html'));
 });
 
 seed()
@@ -538,5 +559,5 @@ seed()
   .catch((e) => { console.error('BUG HUNT seed failed:', e); });
 
 // Vercel / serverless: export the Express app as the request handler.
-// (`vercel.json` routes all traffic here via the @vercel/node runtime.)
+// (`vercel.json` rewrites all traffic here via the Node runtime.)
 module.exports = app;
