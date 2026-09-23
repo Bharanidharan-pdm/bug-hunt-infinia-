@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Submissions — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="/challenges.html"><i data-lucide="code-2"></i> Challenges</a>
+<a href="/submissions.html" class="on"><i data-lucide="history"></i> My Submissions</a>
+<a href="/profile.html"><i data-lucide="users"></i> Team Profile</a>
+<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1>My Submissions</h1><p>Only your team's history. Nothing else.</p></div></div>
+<div id="strap"></div>
+<div class="tblwrap"><table><thead><tr><th>Question</th><th>Time</th><th>Passed</th><th>Score</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table></div>
+</div></div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  const me = await guardTeam(); if (!me) return;
+  $('#strap').innerHTML = teamStrap(me);
+  const { submissions } = await authed('/api/team/submissions');
+  $('#rows').innerHTML = submissions.length ? submissions.map(s => `<tr><td>${esc(s.question_title)}</td><td class="mut small">${fmtTime(s.submitted_at)}</td><td style="font-family:var(--mono)">${s.passed_tests}/${s.total_tests}</td><td style="font-family:var(--mono)">${s.score}/${s.max}</td><td>${statusTag(s.status)}</td></tr>`).join('') : '<tr><td colspan="5"><div class="empty">No submissions yet.</div></td></tr>';
+  icons();
+})();
+</script></body></html>

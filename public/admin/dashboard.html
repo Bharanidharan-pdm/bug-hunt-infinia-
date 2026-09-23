@@ -1,0 +1,207 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Console — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+<style>.tab{display:none}.tab.on{display:block}</style></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>ADMIN CONSOLE</small></span></a>
+<a href="#" data-tab="dash" class="on"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="#" data-tab="qs"><i data-lucide="code-2"></i> Questions</a>
+<a href="#" data-tab="teams"><i data-lucide="users"></i> Teams</a>
+<a href="#" data-tab="subs"><i data-lucide="history"></i> Submissions</a>
+<a href="#" data-tab="lb"><i data-lucide="trophy"></i> Leaderboard</a>
+<a href="#" data-tab="settings"><i data-lucide="settings"></i> Event Settings</a>
+<a href="#" onclick="logout(false);return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main" style="max-width:1300px">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1 id="h">Dashboard</h1><p class="mut">Full control. Private leaderboard — never visible to teams.</p></div>
+<div style="margin-left:auto;display:flex;gap:8px"><button class="btn pri sm" id="newq"><i data-lucide="plus"></i> Create Question</button></div></div>
+
+<!-- DASH -->
+<section class="tab on" id="tab-dash">
+<div class="grid g4" id="cards"></div>
+<h3 style="margin:20px 0 10px">Recent Team Submissions</h3>
+<div class="tblwrap"><table><thead><tr><th>Team</th><th>Question</th><th>Score</th><th>Time</th><th>Status</th></tr></thead><tbody id="recent"></tbody></table></div>
+</section>
+
+<!-- QUESTIONS -->
+<section class="tab" id="tab-qs">
+<div class="tblwrap"><table><thead><tr><th>ID</th><th>Title</th><th>Lang</th><th>Diff</th><th>Pts</th><th>Status</th><th>Actions</th></tr></thead><tbody id="qrows"></tbody></table></div>
+<div class="card" id="qform" style="margin-top:18px;display:none">
+<h3 id="qfTitle">Create Question</h3>
+<div class="two"><div><label>Title *</label><input id="f_title"></div><div><label>Points * (max score)</label><input id="f_points" type="number" min="1" value="20"></div></div>
+<label>Description * (problem statement)</label><textarea id="f_desc" rows="4"></textarea>
+<div class="two"><div><label>Language</label><select id="f_lang"><option>Python</option><option>JavaScript</option><option>Java</option><option>C</option><option>C++</option></select></div>
+<div><label>Difficulty</label><select id="f_diff"><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div>
+<div class="two"><div><label>Time Limit (minutes)</label><input id="f_time" type="number" min="1" value="20"></div>
+<div><label>Status</label><select id="f_status"><option value="draft">Draft</option><option value="published">Published</option><option value="disabled">Disabled</option></select></div></div>
+<label>Buggy Source Code * (Monaco — sent to teams)</label><div id="edBug" style="height:260px;border:1px solid var(--line);border-radius:12px;overflow:hidden"></div>
+<label>Correct Solution * (Monaco — ADMIN ONLY, never sent to teams)</label><div id="edSol" style="height:260px;border:1px solid var(--line);border-radius:12px;overflow:hidden"></div>
+<h3 style="margin-top:16px">Hidden Test Cases <button class="btn sm" id="addtc"><i data-lucide="plus"></i> Add Test Case</button></h3>
+<p class="mut small">Teams never see input/output — only pass/fail.</p>
+<div id="tcs"></div>
+<div style="display:flex;gap:10px;margin-top:14px"><button class="btn pri" id="saveq">Save Question</button><button class="btn ghost" id="cancelq">Cancel</button></div>
+</div>
+</section>
+
+<!-- TEAMS -->
+<section class="tab" id="tab-teams">
+<div class="tblwrap"><table><thead><tr><th>Team</th><th>Member 1</th><th>Member 2</th><th>College</th><th>Solved</th><th>Score</th><th>Status</th><th>Actions</th></tr></thead><tbody id="trows"></tbody></table></div>
+<div class="card" id="tdetail" style="margin-top:14px;display:none"></div>
+</section>
+
+<!-- SUBS -->
+<section class="tab" id="tab-subs">
+<div class="grid g4" style="margin-bottom:12px">
+<div><label>Team</label><select id="flt_team"><option value="">All</option></select></div>
+<div><label>Question</label><select id="flt_q"><option value="">All</option></select></div>
+<div><label>Status</label><select id="flt_s"><option value="">All</option><option>Accepted</option><option>Partial</option><option>Failed</option></select></div>
+<div><label>&nbsp;</label><button class="btn sm" id="flt_go" style="width:100%">Apply Filters</button></div>
+</div>
+<div class="tblwrap"><table><thead><tr><th>Team</th><th>Question</th><th>At</th><th>Passed</th><th>Score</th><th>Status</th></tr></thead><tbody id="srows"></tbody></table></div>
+</section>
+
+<!-- LEADERBOARD -->
+<section class="tab" id="tab-lb">
+<div class="card" style="border-color:rgba(239,68,68,.35)"><b class="small" style="color:#fca5a5">PRIVATE — ADMIN ONLY.</b><span class="mut small"> Never exposed to participant APIs.</span>
+<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><label style="margin:0">Sort by</label><select id="lb_sort" style="max-width:220px"><option value="score">Total Score</option><option value="solved">Questions Solved</option><option value="time">Submission Time</option></select></div></div>
+<div class="tblwrap" style="margin-top:12px"><table><thead><tr><th>Rank</th><th>Team</th><th>Members</th><th>College</th><th>Solved</th><th>Score</th><th>Subs</th><th>Last Submit</th></tr></thead><tbody id="lbrows"></tbody></table></div>
+</section>
+
+<!-- SETTINGS -->
+<section class="tab" id="tab-settings">
+<div class="card form-card" style="margin:0;max-width:720px">
+<label>Event Name</label><input id="s_name">
+<label>Event Description</label><textarea id="s_desc" rows="3"></textarea>
+<div class="two"><div><label>Registration Start</label><input id="s_rs" type="datetime-local"></div><div><label>Registration End</label><input id="s_re" type="datetime-local"></div></div>
+<div class="two"><div><label>Event Start</label><input id="s_es" type="datetime-local"></div><div><label>Event End</label><input id="s_ee" type="datetime-local"></div></div>
+<div class="two"><div><label>Maximum Team Size (locked: 2)</label><input value="2" disabled></div>
+<div><label>Event Status</label><select id="s_status"><option value="upcoming">Upcoming</option><option value="live">Live</option><option value="completed">Completed</option></select></div></div>
+<div class="two"><div><label>Allow Multiple Submissions</label><select id="s_multi"><option value="1">Yes</option><option value="0">No</option></select></div>
+<div><label>Allow Team Profile Editing</label><select id="s_edit"><option value="0">No</option><option value="1">Yes</option></select></div></div>
+<button class="btn pri" id="s_save" style="margin-top:16px">Save Settings</button>
+</div>
+</section>
+
+</div></div>
+<div class="modal" id="del"><div class="box"><h3 style="margin-top:0">Delete question?</h3><p class="mut small">This removes the question, its hidden test cases and links. Submissions are kept. This cannot be undone.</p>
+<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn ghost sm" id="delNo">Cancel</button><button class="btn danger sm" id="delYes">Delete</button></div></div></div>
+<script src="/js/common.js"></script>
+<script>
+let editingId = null, delId = null, edB = null, edS = null;
+const tabs = $$('.side [data-tab]');
+tabs.forEach(a => a.onclick = (e) => { e.preventDefault(); tabs.forEach(x => x.classList.remove('on')); a.classList.add('on');
+  $$('.tab').forEach(t => t.classList.remove('on')); $('#tab-' + a.dataset.tab).classList.add('on');
+  $('#h').textContent = a.textContent.trim(); document.body.classList.remove('navopen'); icons(); });
+function monacoLang(l){ return {Python:'python',JavaScript:'javascript',Java:'java',C:'c','C++':'cpp'}[l] || 'python'; }
+function ensureEditors(lang, bug, sol){
+  require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
+  require(['vs/editor/editor.main'], () => {
+    if (edB) edB.dispose(); if (edS) edS.dispose();
+    edB = monaco.editor.create($('#edBug'), { value: bug || '', language: monacoLang(lang), theme: 'vs-dark', automaticLayout: true, fontSize: 13, minimap: { enabled: false } });
+    edS = monaco.editor.create($('#edSol'), { value: sol || '', language: monacoLang(lang), theme: 'vs-dark', automaticLayout: true, fontSize: 13, minimap: { enabled: false } });
+  });
+}
+function tcRow(inp = '', out = '') {
+  const d = document.createElement('div'); d.className = 'card'; d.style.marginTop = '8px';
+  d.innerHTML = `<div class="two"><div><label>Input</label><textarea rows="2" class="tc-in">${esc(inp)}</textarea></div><div><label>Expected Output</label><textarea rows="2" class="tc-out">${esc(out)}</textarea></div></div><button class="btn danger sm tc-del" style="margin-top:8px">Remove</button>`;
+  d.querySelector('.tc-del').onclick = () => d.remove();
+  return d;
+}
+async function loadDash() {
+  const s = await authed('/api/admin/stats');
+  const c = s.cards;
+  $('#cards').innerHTML = [['Total Teams', c.total_teams], ['Active Teams', c.active_teams], ['Total Questions', c.total_questions], ['Published', c.published], ['Submissions', c.submissions], ['Total Points', c.points], ['Avg Score', c.avg]]
+    .map(([l, v]) => `<div class="card kpi"><span class="l">${l.toUpperCase()}</span><span class="v">${v}</span></div>`).join('');
+  $('#recent').innerHTML = s.recent.length ? s.recent.map(r => `<tr><td>${esc(r.team)}</td><td>${esc(r.question)}</td><td style="font-family:var(--mono)">${r.score}</td><td class="mut small">${fmtTime(r.submitted_at)}</td><td>${statusTag(r.status)}</td></tr>`).join('') : '<tr><td colspan="5"><div class="empty">No submissions yet.</div></td></tr>';
+}
+async function loadQs() {
+  const { questions } = await authed('/api/admin/questions');
+  $('#qrows').innerHTML = questions.map(q => `<tr><td class="mut small" style="font-family:var(--mono)">${esc(q.id.slice(0,10))}</td><td><b>${esc(q.title)}</b></td><td>${esc(q.language)}</td><td><span class="tag ${diffTag(q.difficulty)}">${esc(q.difficulty)}</span></td><td style="font-family:var(--mono)">${q.points}</td><td>${statusTag(q.status)}</td>
+    <td style="white-space:nowrap"><button class="btn sm" data-view="${q.id}">View</button> <button class="btn sm" data-edit="${q.id}">Edit</button> <button class="btn sm" data-pub="${q.id}">${q.status === 'published' ? 'Disable' : 'Publish'}</button> <button class="btn danger sm" data-del="${q.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7"><div class="empty">No questions. Create one.</div></td></tr>';
+  $$('#qrows [data-view]').forEach(b => b.onclick = () => openForm(b.dataset.view, true));
+  $$('#qrows [data-edit]').forEach(b => b.onclick = () => openForm(b.dataset.edit, false));
+  $$('#qrows [data-del]').forEach(b => b.onclick = () => { delId = b.dataset.del; $('#del').classList.add('open'); });
+  $$('#qrows [data-pub]').forEach(b => b.onclick = async () => {
+    const { question } = await authed('/api/admin/questions/' + b.dataset.pub);
+    await authed('/api/admin/questions/' + b.dataset.pub, { method: 'PUT', body: JSON.stringify({ status: question.status === 'published' ? 'disabled' : 'published' }) });
+    toast('Status updated.', 'ok'); loadQs(); loadDash();
+  });
+  const fq = $('#flt_q'); if (fq && !fq.dataset.done) { fq.dataset.done = 1; questions.forEach(q => { const o = document.createElement('option'); o.value = q.id; o.textContent = q.title; fq.appendChild(o); }); }
+}
+async function openForm(id, viewOnly) {
+  editingId = id || null;
+  let q = { title: '', description: '', language: 'Python', difficulty: 'Easy', points: 20, buggy_code: '', solution_code: '', time_limit: 20, status: 'draft' }, tcs = [];
+  if (id) { const r = await authed('/api/admin/questions/' + id); q = r.question; tcs = r.test_cases; }
+  $('#qfTitle').textContent = (id ? (viewOnly ? 'View' : 'Edit') : 'Create') + ' Question';
+  $('#f_title').value = q.title; $('#f_desc').value = q.description; $('#f_lang').value = q.language; $('#f_diff').value = q.difficulty;
+  $('#f_points').value = q.points; $('#f_time').value = q.time_limit; $('#f_status').value = q.status;
+  $('#tcs').innerHTML = ''; (tcs.length ? tcs : [{ input_data: '', expected_output: '' }]).forEach(t => $('#tcs').appendChild(tcRow(t.input_data, t.expected_output)));
+  $('#qform').style.display = 'block'; $('#qform').scrollIntoView({ behavior: 'smooth' });
+  ensureEditors(q.language, q.buggy_code, q.solution_code);
+  $('#saveq').style.display = viewOnly ? 'none' : '';
+  icons();
+}
+async function loadTeams() {
+  const { teams } = await authed('/api/admin/teams');
+  $('#trows').innerHTML = teams.map(t => `<tr><td><b>${esc(t.team_name)}</b><div class="mut small">${esc(t.login_email)}</div></td><td>${esc(t.member1)}</td><td>${esc(t.member2)}</td><td class="small">${esc(t.college)}<div class="mut">${esc(t.department)}</div></td><td style="font-family:var(--mono)">${t.solved}</td><td style="font-family:var(--mono)">${t.score}</td><td>${statusTag(t.status)}</td>
+    <td style="white-space:nowrap"><button class="btn sm" data-vt="${t.id}">View</button> <button class="btn sm" data-tg="${t.id}">${t.status === 'active' ? 'Disable' : 'Enable'}</button></td></tr>`).join('') || '<tr><td colspan="8"><div class="empty">No teams yet.</div></td></tr>';
+  $$('#trows [data-vt]').forEach(b => b.onclick = async () => {
+    const r = await authed('/api/admin/teams/' + b.dataset.vt);
+    $('#tdetail').style.display = 'block';
+    $('#tdetail').innerHTML = `<h3>${esc(r.team.team_name)} ${statusTag(r.team.status)}</h3>` + r.members.map(m => `<p class="small"><b>Member ${m.member_number}:</b> ${esc(m.full_name)} · ${esc(m.email)} · ${esc(m.phone)} · ${esc(m.college)} · ${esc(m.department)} · Year ${esc(m.year)}</p>`).join('') + `<p class="small mut">Login: ${esc(r.team.login_email)} · Submissions: ${r.submissions.length}</p>`;
+    $('#tdetail').scrollIntoView({ behavior: 'smooth' });
+  });
+  $$('#trows [data-tg]').forEach(b => b.onclick = async () => {
+    const cur = teams.find(t => t.id === b.dataset.tg).status;
+    await authed('/api/admin/teams/' + b.dataset.tg + '/status', { method: 'PUT', body: JSON.stringify({ status: cur === 'active' ? 'disabled' : 'active' }) });
+    toast('Team status updated.', 'ok'); loadTeams(); loadDash();
+  });
+  const ft = $('#flt_team'); if (ft && !ft.dataset.done) { ft.dataset.done = 1; teams.forEach(t => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.team_name; ft.appendChild(o); }); }
+}
+async function loadSubs() {
+  const p = new URLSearchParams({ team: $('#flt_team').value, question: $('#flt_q').value, status: $('#flt_s').value });
+  const { submissions } = await authed('/api/admin/submissions?' + p);
+  $('#srows').innerHTML = submissions.map(s => `<tr><td>${esc(s.team_name)}</td><td>${esc(s.question_title)}</td><td class="mut small">${fmtTime(s.submitted_at)}</td><td style="font-family:var(--mono)">${s.passed_tests}/${s.total_tests}</td><td style="font-family:var(--mono)">${s.score}</td><td>${statusTag(s.status)}</td></tr>`).join('') || '<tr><td colspan="6"><div class="empty">No submissions match.</div></td></tr>';
+}
+async function loadLb() {
+  const { leaderboard } = await authed('/api/admin/leaderboard?sort=' + $('#lb_sort').value);
+  $('#lbrows').innerHTML = leaderboard.map(r => `<tr><td><b>${r.rank}</b></td><td><b>${esc(r.team_name)}</b></td><td class="small">${esc(r.member1)} + ${esc(r.member2)}</td><td class="small">${esc(r.college)}</td><td style="font-family:var(--mono)">${r.solved}</td><td style="font-family:var(--mono)"><b>${r.score}</b></td><td style="font-family:var(--mono)">${r.submissions}</td><td class="mut small">${r.last_submit ? fmtTime(r.last_submit) : '—'}</td></tr>`).join('') || '<tr><td colspan="8"><div class="empty">No teams yet.</div></td></tr>';
+}
+async function loadSettings() {
+  const { settings } = await authed('/api/admin/settings');
+  const dt = (v) => v ? v.slice(0, 16) : '';
+  $('#s_name').value = settings.event_name || ''; $('#s_desc').value = settings.description || '';
+  $('#s_rs').value = dt(settings.registration_start); $('#s_re').value = dt(settings.registration_end);
+  $('#s_es').value = dt(settings.event_start); $('#s_ee').value = dt(settings.event_end);
+  $('#s_status').value = settings.status || 'live'; $('#s_multi').value = settings.allow_multiple_submissions ? '1' : '0'; $('#s_edit').value = settings.allow_profile_edit ? '1' : '0';
+}
+(async () => {
+  try { await authed('/api/admin/stats'); } catch { document.body.innerHTML = '<div class="wrap" style="padding:80px 20px;text-align:center"><h1>403 – Access Denied</h1><p class="mut">Admins only. <a href="/admin/login.html">Admin login</a></p></div>'; return; }
+  await Promise.all([loadDash(), loadQs(), loadTeams(), loadSubs(), loadLb(), loadSettings()]);
+  icons();
+  $('#newq').onclick = () => openForm(null, false);
+  $('#cancelq').onclick = () => { $('#qform').style.display = 'none'; editingId = null; };
+  $('#addtc').onclick = () => $('#tcs').appendChild(tcRow());
+  $('#f_lang').onchange = () => ensureEditors($('#f_lang').value, edB ? edB.getValue() : '', edS ? edS.getValue() : '');
+  $('#saveq').onclick = async () => {
+    const body = { title: $('#f_title').value, description: $('#f_desc').value, language: $('#f_lang').value, difficulty: $('#f_diff').value, points: parseInt($('#f_points').value, 10), buggy_code: edB.getValue(), solution_code: edS.getValue(), time_limit: parseInt($('#f_time').value, 10), status: $('#f_status').value,
+      test_cases: $$('#tcs .card').map(d => ({ input_data: d.querySelector('.tc-in').value, expected_output: d.querySelector('.tc-out').value })).filter(t => t.input_data !== '' || t.expected_output !== '') };
+    try {
+      if (editingId) await authed('/api/admin/questions/' + editingId, { method: 'PUT', body: JSON.stringify(body) });
+      else await authed('/api/admin/questions', { method: 'POST', body: JSON.stringify(body) });
+      toast('Question saved.', 'ok'); $('#qform').style.display = 'none'; editingId = null; loadQs(); loadDash();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#delNo').onclick = () => $('#del').classList.remove('open');
+  $('#delYes').onclick = async () => { $('#del').classList.remove('open'); await authed('/api/admin/questions/' + delId, { method: 'DELETE' }); toast('Deleted.', 'ok'); loadQs(); loadDash(); };
+  $('#flt_go').onclick = loadSubs; $('#lb_sort').onchange = loadLb;
+  $('#s_save').onclick = async () => {
+    const d = (v) => v ? new Date(v).toISOString() : null;
+    await authed('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ event_name: $('#s_name').value, description: $('#s_desc').value, registration_start: d($('#s_rs').value), registration_end: d($('#s_re').value), event_start: d($('#s_es').value), event_end: d($('#s_ee').value), status: $('#s_status').value, allow_multiple_submissions: $('#s_multi').value === '1', allow_profile_edit: $('#s_edit').value === '1' }) });
+    toast('Settings saved.', 'ok');
+  };
+})();
+</script></body></html>

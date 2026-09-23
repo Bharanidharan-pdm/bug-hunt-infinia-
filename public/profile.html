@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Team Profile — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="/challenges.html"><i data-lucide="code-2"></i> Challenges</a>
+<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="/profile.html" class="on"><i data-lucide="users"></i> Team Profile</a>
+<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1>Team Profile</h1><p>Locked after registration unless admin enables editing.</p></div></div>
+<div id="strap"></div>
+<div class="grid g2" id="cards"></div>
+<div class="card" style="margin-top:16px"><h3>Team Login</h3><p class="small mut" id="login"></p>
+<label>Team Name (editable only if admin allows)</label>
+<div style="display:flex;gap:10px"><input id="tname"><button class="btn pri sm" id="save">Save</button></div>
+<p class="small mut" id="lockmsg"></p></div>
+</div></div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  const me = await guardTeam(); if (!me) return;
+  $('#strap').innerHTML = teamStrap(me);
+  const p = await authed('/api/team/profile');
+  const card = (m) => `<div class="card"><h3>Member ${m.member_number}: ${esc(m.full_name)}</h3>
+    <p class="small"><span class="mut">Email:</span> ${esc(m.email)}</p><p class="small"><span class="mut">Phone:</span> ${esc(m.phone)}</p>
+    <p class="small"><span class="mut">College:</span> ${esc(m.college)}</p><p class="small"><span class="mut">Department:</span> ${esc(m.department)}</p>
+    <p class="small"><span class="mut">Year:</span> ${esc(m.year)}</p></div>`;
+  $('#cards').innerHTML = `<div class="card"><h3>Team: ${esc(p.team.team_name)}</h3><p class="small mut">Registered ${fmtTime(p.team.created_at)}</p></div>` + p.members.map(card).join('');
+  $('#login').textContent = p.team.login_email;
+  $('#tname').value = p.team.team_name;
+  $('#lockmsg').textContent = p.editable ? 'Editing is enabled by admin.' : 'Team members cannot be changed (admin has editing disabled).';
+  $('#save').disabled = !p.editable;
+  $('#save').onclick = async () => { try { await authed('/api/team/profile', { method: 'PUT', body: JSON.stringify({ team_name: $('#tname').value }) }); toast('Saved.', 'ok'); } catch (e) { toast(e.message, 'err'); } };
+  icons();
+})();
+</script></body></html>

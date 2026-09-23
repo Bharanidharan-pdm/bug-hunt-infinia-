@@ -1,0 +1,38 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side" id="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="/dashboard.html" class="on"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="/challenges.html"><i data-lucide="code-2"></i> Challenges</a>
+<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="/profile.html"><i data-lucide="users"></i> Team Profile</a>
+<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1 id="welcome">Welcome</h1><p>Your private team workspace — no leaderboard, no rivals, just bugs.</p></div></div>
+<div id="strap"></div>
+<div class="grid g4" id="cards"></div>
+<h3 style="margin:22px 0 10px">Recent Submissions</h3>
+<div class="tblwrap"><table><thead><tr><th>Question</th><th>Passed</th><th>Score</th><th>Status</th><th>Time</th></tr></thead><tbody id="recent"></tbody></table></div>
+</div></div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  const me = await guardTeam(); if (!me) return;
+  $('#welcome').textContent = 'Welcome, ' + me.team.team_name;
+  $('#strap').innerHTML = teamStrap(me);
+  const d = await authed('/api/team/dashboard');
+  const c = d.cards;
+  $('#cards').innerHTML = `
+    <div class="card kpi"><span class="l">QUESTIONS AVAILABLE</span><span class="v">${c.available}</span></div>
+    <div class="card kpi"><span class="l">ATTEMPTED</span><span class="v">${c.attempted}</span></div>
+    <div class="card kpi"><span class="l">SOLVED</span><span class="v" style="color:#86efac">${c.solved}</span></div>
+    <div class="card kpi"><span class="l">MY TOTAL SCORE</span><span class="v" style="background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent">${c.score}</span></div>`;
+  $('#recent').innerHTML = d.recent.length ? d.recent.map(s => `<tr><td>${esc(s.question_title)}</td><td style="font-family:var(--mono)">${s.passed_tests}/${s.total_tests}</td><td style="font-family:var(--mono)">${s.score}</td><td>${statusTag(s.status)}</td><td class="mut small">${fmtTime(s.submitted_at)}</td></tr>`).join('') : '<tr><td colspan="5"><div class="empty">No submissions yet. Head to Challenges.</div></td></tr>';
+  icons();
+})();
+</script></body></html>

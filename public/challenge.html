@@ -1,0 +1,94 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Debug — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="/challenges.html" class="on"><i data-lucide="code-2"></i> Challenges</a>
+<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="/profile.html"><i data-lucide="users"></i> Team Profile</a>
+<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main" style="max-width:1400px">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1 id="title">Loading…</h1><p><a href="/challenges.html">← All challenges</a></p></div>
+<div style="margin-left:auto" class="timer" id="timer">--:--</div></div>
+<div class="ide">
+<div class="card qpane">
+<div id="qmeta"></div>
+<h3 style="margin-top:14px">Description</h3><div id="qdesc" class="small" style="line-height:1.7;color:var(--mut)"></div>
+<div class="card" style="margin-top:14px;background:rgba(245,158,11,.06)"><b class="small">HIDDEN TESTS</b><p class="small mut" style="margin:6px 0 0">Inputs & expected outputs are secret. You only see pass/fail per test.</p></div>
+</div>
+<div>
+<div class="card" style="padding:14px"><div id="editor"><div class="empty">Loading editor…</div></div>
+<div class="toolbar">
+<button class="btn sm" id="run"><i data-lucide="play"></i> Run Code</button>
+<button class="btn pri sm" id="submit"><i data-lucide="send"></i> Submit Solution</button>
+<button class="btn ghost sm" id="reset"><i data-lucide="rotate-ccw"></i> Reset Code</button>
+<span class="mut small" id="hint" style="margin-left:auto"></span>
+</div>
+<h3 style="margin:16px 0 8px">Test Results</h3>
+<div id="results"><div class="empty small">Press Run Code to evaluate against hidden tests.</div></div>
+</div>
+</div>
+</div>
+</div></div>
+<div class="modal" id="confirm"><div class="box"><h3 style="margin-top:0">Submit solution?</h3><p class="mut small">Are you sure you want to submit this solution? It will be evaluated against all hidden test cases.</p>
+<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn ghost sm" id="cancel">Cancel</button><button class="btn pri sm" id="yes">Submit</button></div></div></div>
+<script src="/js/common.js"></script>
+<script>
+let Q, editor, dead = false, remaining = 0, tickInt = null;
+const qid = new URLSearchParams(location.search).get('id');
+const langMap = { Python: 'python', JavaScript: 'javascript', Java: 'java', 'C': 'c', 'C++': 'cpp' };
+function lock(msg) { dead = true; clearInterval(tickInt); $('#timer').textContent = "TIME'S UP"; $('#timer').classList.add('dead'); ['run','submit','reset'].forEach(id => $('#' + id).disabled = true); if (editor) editor.updateOptions({ readOnly: true }); localStorage.setItem('bh_code_' + qid, editor ? editor.getValue() : ''); toast(msg || "TIME'S UP — editor locked, code auto-saved.", 'err'); }
+function drawTimer() { const m = Math.floor(remaining / 60), s = remaining % 60; $('#timer').textContent = 'TIME LEFT: ' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'); if (remaining <= 60) $('#timer').classList.add('dead'); }
+(async () => {
+  const me = await guardTeam(); if (!me) return;
+  if (!qid) { location.href = '/challenges.html'; return; }
+  const { question } = await authed('/api/team/questions/' + qid).catch(e => { toast(e.message, 'err'); throw e; });
+  Q = question;
+  $('#title').textContent = question.title;
+  $('#qmeta').innerHTML = `<div class="mut small" style="letter-spacing:.14em;font-weight:800">QUESTION</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0"><span class="tag ${diffTag(question.difficulty)}">${esc(question.difficulty)}</span><span class="tag">${esc(question.language)}</span><span class="tag" style="color:#c4b5fd">${question.points} PTS</span><span class="tag">${question.time_limit} MIN</span></div>`;
+  $('#qdesc').innerHTML = esc(question.description).replace(/\n/g, '<br>');
+  const st = await authed('/api/team/questions/' + qid + '/start', { method: 'POST' });
+  const elapsed = Math.floor((Date.now() - new Date(st.started_at).getTime()) / 1000);
+  remaining = Math.max(0, st.time_limit * 60 - elapsed);
+  drawTimer();
+  tickInt = setInterval(() => { remaining--; if (remaining <= 0) { lock(); } else drawTimer(); }, 1000);
+  if (remaining <= 0) lock();
+  const saved = localStorage.getItem('bh_code_' + qid);
+  require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
+  require(['vs/editor/editor.main'], () => {
+    editor = monaco.editor.create($('#editor'), { value: saved || question.buggy_code, language: langMap[question.language] || 'python', theme: 'vs-dark', automaticLayout: true, fontSize: 14, minimap: { enabled: false } });
+    editor.onDidChangeModelContent(() => { if (!dead) localStorage.setItem('bh_code_' + qid, editor.getValue()); });
+    if (dead) editor.updateOptions({ readOnly: true });
+  });
+  icons();
+  const render = (r) => {
+    $('#results').innerHTML = `<div class="card" style="margin-bottom:10px"><b>TEST RESULTS</b> <span class="mut small">· Passed ${r.passed}/${r.total} · Failed ${r.total - r.passed}/${r.total}</span><p class="small ${r.passed === r.total ? '' : 'mut'}" style="margin:6px 0 0;${r.passed === r.total ? 'color:#86efac' : ''}">${r.passed === r.total ? 'All test cases passed' : 'Some test cases failed.'}${r.mock ? ' <span class="mut">(demo mock evaluator)</span>' : ''}</p></div>` +
+      `<div class="testres">` + r.results.map((t, i) => `<div class="testrow ${t.pass ? 'pass' : 'failr'}"><span>${t.pass ? '✓' : '✗'}</span><span>Test ${i + 1}</span><span style="margin-left:auto">${t.pass ? 'PASSED' : 'FAILED'}</span></div>`).join('') + `</div>`;
+    icons();
+  };
+  $('#run').onclick = async () => {
+    if (dead) return lock();
+    $('#hint').textContent = 'Running…'; $('#run').disabled = true;
+    try { const r = await authed('/api/team/questions/' + qid + '/run', { method: 'POST', body: JSON.stringify({ code: editor.getValue() }) }); render(r); $('#hint').textContent = `Done in ${r.exec_ms}ms`; }
+    catch (e) { if (/TIME'S UP/i.test(e.message)) lock(e.message); else toast(e.message, 'err'); }
+    $('#run').disabled = dead;
+  };
+  $('#reset').onclick = () => { if (dead || !editor) return; editor.setValue(Q.buggy_code); localStorage.removeItem('bh_code_' + qid); toast('Reset to buggy code.'); };
+  $('#submit').onclick = () => { if (!dead) $('#confirm').classList.add('open'); };
+  $('#cancel').onclick = () => $('#confirm').classList.remove('open');
+  $('#yes').onclick = async () => {
+    $('#confirm').classList.remove('open');
+    try { const r = await authed('/api/team/questions/' + qid + '/submit', { method: 'POST', body: JSON.stringify({ code: editor.getValue() }) });
+      localStorage.removeItem('bh_code_' + qid);
+      $('#results').innerHTML = `<div class="card" style="border-color:rgba(34,197,94,.4)"><h3 style="color:#86efac;margin-top:0">Submission Successful</h3><p class="small">Question: <b>${esc(r.question)}</b></p><p class="small">Passed: <b>${r.passed}/${r.total}</b></p><p class="small">Score: <b>${r.score}/${r.max}</b> · ${esc(r.status)}</p><p class="mut small">Submission Time: ${fmtTime(r.submitted_at)} · <a href="/submissions.html">View My Submissions</a></p></div>`; toast(`Scored ${r.score}/${r.max}`, 'ok');
+    } catch (e) { if (/TIME'S UP/i.test(e.message)) lock(e.message); else toast(e.message, 'err'); }
+  };
+})();
+</script></body></html>

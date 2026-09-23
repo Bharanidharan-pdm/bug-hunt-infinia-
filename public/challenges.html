@@ -1,0 +1,35 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Challenges — BUG HUNT</title><link rel="stylesheet" href="/css/style.css"><script src="https://unpkg.com/lucide@latest"></script></head>
+<body><div class="bg-grid"></div>
+<div class="app">
+<aside class="side">
+<a class="brand" href="/" style="margin-bottom:14px"><span class="logo"><i data-lucide="bug" style="color:#fff"></i></span><span>BUG HUNT<small>TEAM ARENA</small></span></a>
+<a href="/dashboard.html"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+<a href="/challenges.html" class="on"><i data-lucide="code-2"></i> Challenges</a>
+<a href="/submissions.html"><i data-lucide="history"></i> My Submissions</a>
+<a href="/profile.html"><i data-lucide="users"></i> Team Profile</a>
+<a href="/rules.html"><i data-lucide="scroll-text"></i> Rules</a>
+<a href="#" onclick="logout();return false"><i data-lucide="log-out"></i> Logout</a>
+</aside>
+<div class="main">
+<div class="pagehead"><button class="btn sm hamb" onclick="document.body.classList.toggle('navopen')"><i data-lucide="menu"></i></button>
+<div><h1>Challenges</h1><p>Published debugging missions only. Hidden tests stay hidden.</p></div></div>
+<div id="strap"></div>
+<div class="grid g3" id="list"></div>
+</div></div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  const me = await guardTeam(); if (!me) return;
+  $('#strap').innerHTML = teamStrap(me);
+  const { questions } = await authed('/api/team/challenges');
+  $('#list').innerHTML = questions.length ? questions.map((q, i) => `
+    <div class="card glass"><div class="mut small" style="letter-spacing:.14em;font-weight:800">QUESTION ${String(i + 1).padStart(2, '0')}</div>
+    <h3 style="margin:8px 0">${esc(q.title)}</h3>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"><span class="tag ${diffTag(q.difficulty)}">${esc(q.difficulty)}</span><span class="tag">${esc(q.language)}</span><span class="tag" style="color:#c4b5fd">${q.points} PTS</span>${q.best_status ? statusTag(q.best_status) : ''}</div>
+    <p class="mut small">${q.test_count} hidden tests · ${q.time_limit} min ${q.best_score ? `· best ${q.best_score}/${q.points}` : ''}</p>
+    <a class="btn pri sm" href="/challenge.html?id=${q.id}"><i data-lucide="play"></i> Start Challenge</a></div>`).join('')
+    : '<div class="card"><div class="empty">No published challenges yet. Check back soon.</div></div>';
+  icons();
+})();
+</script></body></html>
