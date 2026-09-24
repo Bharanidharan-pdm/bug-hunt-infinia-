@@ -2,7 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "functions": {
-    "api/index.js": { "maxDuration": 10, "includeFiles": "public/**" }
+    "api/index.js": {
+      "maxDuration": 10,
+      "includeFiles": ["public/**", "server.js", "package.json"]
+    }
   },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index.js" }

@@ -26,11 +26,34 @@ const MOCK_NON_PYTHON = (process.env.MOCK_NON_PYTHON || 'true') === 'true';
 // Locally use ./data/db.json, on Vercel use /tmp/bughunt-db.json (ephemeral)
 // + in-memory fallback so UI never crashes with EROFS.
 const IS_VERCEL = !!process.env.VERCEL;
-const DATA_DIR = IS_VERCEL ? require('os').tmpdir() : path.join(__dirname, 'data');
+
+// Resolve the writable data directory robustly. Depending on how the serverless
+// bundle is assembled, files may sit relative to __dirname, process.cwd(), or a
+// parent folder — so try each candidate and fall back to a freshly-created ./data.
+function resolveDir(candidatePaths, fallback) {
+  for (const p of candidatePaths) {
+    try { if (fs.statSync(p).isDirectory()) return p; } catch {}
+  }
+  try { fs.mkdirSync(fallback, { recursive: true }); return fallback; } catch {}
+  return fallback;
+}
+const DATA_DIR = IS_VERCEL ? require('os').tmpdir() : resolveDir(
+  [path.join(__dirname, 'data'), path.join(process.cwd(), 'data'), path.join(__dirname, '..', 'data')],
+  path.join(__dirname, 'data')
+);
 const DB_FILE = path.join(DATA_DIR, IS_VERCEL ? 'bughunt-db.json' : 'db.json');
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 } catch (e) { console.warn('DATA_DIR init skipped:', e.message); }
+
+// Resolve the static frontend folder the same way. This is the classic "localhost
+// works, Vercel 404s" trap: inside the serverless function the static assets may
+// live under __dirname/public, process.cwd()/public or one directory up, so we
+// must not hard-code a single base.
+const PUBLIC_DIR = resolveDir(
+  [path.join(__dirname, 'public'), path.join(process.cwd(), 'public'), path.join(__dirname, '..', 'public')],
+  path.join(__dirname, 'public')
+);
 
 const uid = (p = 'id') => p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 const nowISO = () => new Date().toISOString();
@@ -537,14 +560,23 @@ app.put('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
 // Friendly 403 page for participants hitting /admin/* without admin token is enforced client-side + API-side.
 // NOTE: express.static must come before the fallback so /css/style.css and /js/common.js
 // always resolve with correct MIME — otherwise UI/UX breaks on Vercel.
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(PUBLIC_DIR));
 app.get('/admin', (req, res) => res.redirect('/admin/login.html'));
 app.get('/admin/', (req, res) => res.redirect('/admin/login.html'));
+// Serve the main pages without the .html extension too (e.g. /register, /login, /rules)
+// so the registration page is reachable whichever way a link/URL refers to it.
+const PAGE_ALIASES = ['index', 'login', 'register', 'rules', 'dashboard', 'challenges', 'challenge', 'submissions', 'profile', '403'];
+app.get('/:page', (req, res, next) => {
+  if (PAGE_ALIASES.includes(req.params.page)) return res.sendFile(path.join(PUBLIC_DIR, req.params.page + '.html'));
+  next();
+});
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
   // Missing static asset (css/js/img) -> proper 404, not 403 page (prevents broken UI masking)
   if (/\.(css|js|map|png|jpg|jpeg|svg|ico|woff2?|ttf)$/i.test(req.path)) return res.status(404).end();
-  res.status(404).sendFile(path.join(__dirname, 'public', '403.html'));
+  const notFoundPage = path.join(PUBLIC_DIR, '403.html');
+  if (fs.existsSync(notFoundPage)) return res.status(404).sendFile(notFoundPage);
+  return res.status(404).send('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>404 — BUG HUNT</title></head><body style="font-family:system-ui,sans-serif;text-align:center;padding:80px 20px;background:#070b16;color:#e2e8f0"><h1 style="font-size:64px;margin:0">404</h1><h2>Page not found</h2><p style="color:#94a3b8">The page you requested does not exist.</p><a style="color:#38bdf8" href="/">Go Home</a></body></html>');
 });
 
 seed()
