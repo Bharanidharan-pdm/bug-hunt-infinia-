@@ -49,8 +49,12 @@ Scoring is backend-only: `score = round(points × passed/total)`, capped at ques
 
 ## Production (PostgreSQL)
 
-1. Create DB, run `schema.sql` (`psql $DATABASE_URL -f schema.sql`).
-2. Port the JSON store (`data/db.json`) to Postgres tables (same column names) or wire your ORM to the schema.
+No code changes needed — the server auto-selects storage at boot:
+- **No `DATABASE_URL`** → local JSON file (`data/db.json`). Localhost/event laptop.
+- **`DATABASE_URL` set** (e.g. free Neon DB) → shared Postgres. **Required on Vercel** — otherwise teams/questions vanish on refresh/cold-start/redeploy (each serverless instance would keep its own memory).
+
+1. Create a free Postgres DB (Neon/Supabase), copy its connection string.
+2. Tables self-create on boot (`CREATE TABLE IF NOT EXISTS`); optionally pre-run `schema.sql` (`psql $DATABASE_URL -f schema.sql`).
 3. Set `DATABASE_URL`, strong `JWT_SECRET`, `MOCK_NON_PYTHON=false` + sandbox executor.
 4. Put the app behind HTTPS, disable demo seeds.
 

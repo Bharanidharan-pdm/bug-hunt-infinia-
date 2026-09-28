@@ -87,11 +87,154 @@ function save() {
   catch (e) { console.warn('DB save skipped (ephemeral FS):', e.message); }
 }
 
+// ---------- storage (file JSON <-> PostgreSQL) ----------
+// File mode (default, no DATABASE_URL): local JSON store — localhost/event laptop.
+// PG mode (DATABASE_URL set, e.g. Neon on Vercel): EVERY read/write goes to the
+// shared Postgres database, so all serverless instances see the SAME data and
+// teams/questions NEVER vanish on refresh, cold start or redeploy.
+// Row shapes are identical in both modes; ids stay opaque strings.
+const USE_PG = !!process.env.DATABASE_URL;
+const { randomUUID } = require('crypto');
+const newId = (p = 'id') => (USE_PG ? randomUUID() : uid(p));
+let pgPool = null;
+function getPool() {
+  if (pgPool) return pgPool;
+  const url = process.env.DATABASE_URL;
+  if (url.startsWith('pgmem://')) {
+    // TEST ONLY: in-memory Postgres emulator (npm i --no-save pg-mem). Never used in prod.
+    const { newDb } = require('pg-mem');
+    const { Pool } = newDb().adapters.createPg();
+    pgPool = new Pool();
+  } else {
+    const { Pool } = require('pg');
+    pgPool = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 15000 });
+  }
+  return pgPool;
+}
+// Portable DDL (no extensions): TEXT ids/timestamps keep row shapes identical to file mode.
+const PG_DDL = [
+  `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, team_name TEXT NOT NULL, login_email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, college TEXT NOT NULL DEFAULT '', department TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS team_members (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, member_number INT NOT NULL, full_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, college TEXT NOT NULL, department TEXT NOT NULL, year TEXT NOT NULL, UNIQUE(team_id, member_number))`,
+  `CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, language TEXT NOT NULL, difficulty TEXT NOT NULL, points INT NOT NULL, buggy_code TEXT NOT NULL, solution_code TEXT NOT NULL, time_limit INT NOT NULL DEFAULT 20, status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS test_cases (id TEXT PRIMARY KEY, question_id TEXT NOT NULL, input_data TEXT NOT NULL DEFAULT '', expected_output TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, question_id TEXT NOT NULL, started_at TEXT NOT NULL DEFAULT '', UNIQUE(team_id, question_id))`,
+  `CREATE TABLE IF NOT EXISTS submissions (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, question_id TEXT NOT NULL, submitted_code TEXT NOT NULL, passed_tests INT NOT NULL DEFAULT 0, total_tests INT NOT NULL DEFAULT 0, score INT NOT NULL DEFAULT 0, execution_time INT NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Failed', submitted_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS event_settings (id INT PRIMARY KEY, event_name TEXT NOT NULL DEFAULT 'BUG HUNT', description TEXT NOT NULL DEFAULT '', registration_start TEXT, registration_end TEXT, event_start TEXT, event_end TEXT, max_team_size INT NOT NULL DEFAULT 2, allow_multiple_submissions BOOLEAN NOT NULL DEFAULT true, allow_profile_edit BOOLEAN NOT NULL DEFAULT false, status TEXT NOT NULL DEFAULT 'live')`,
+];
+async function pgInit() {
+  const pool = getPool();
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      for (const sql of PG_DDL) await pool.query(sql);
+      const s = await pool.query('SELECT * FROM event_settings WHERE id = 1');
+      if (!s.rows.length) {
+        await pool.query(`INSERT INTO event_settings (id, event_name, description, max_team_size, allow_multiple_submissions, allow_profile_edit, status) VALUES (1,'BUG HUNT','A competitive debugging challenge where two-member teams test their coding skills by finding and fixing bugs.',2,true,false,'live')`);
+      }
+      return;
+    } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, 1000)); }
+  }
+  throw new Error('Postgres init failed (DATABASE_URL unreachable?): ' + (lastErr && lastErr.message));
+}
+// Row mappers: timestamptz may come back as Date (real pg) or string (file/pg-mem) — normalize to ISO strings.
+const S = (v) => (v === null || v === undefined ? null : (v instanceof Date ? v.toISOString() : String(v)));
+const N = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+const B = (v) => !!v;
+const mapSettings = (r) => r ? ({ event_name: r.event_name, description: r.description, registration_start: S(r.registration_start), registration_end: S(r.registration_end), event_start: S(r.event_start), event_end: S(r.event_end), max_team_size: N(r.max_team_size, 2), allow_multiple_submissions: B(r.allow_multiple_submissions), allow_profile_edit: B(r.allow_profile_edit), status: r.status }) : null;
+const mapTeam = (r) => r && ({ id: String(r.id), team_name: r.team_name, login_email: r.login_email, password_hash: r.password_hash, college: r.college || '', department: r.department || '', status: r.status, created_at: S(r.created_at) });
+const mapMember = (r) => r && ({ id: String(r.id), team_id: String(r.team_id), member_number: N(r.member_number), full_name: r.full_name, email: r.email, phone: r.phone, college: r.college, department: r.department, year: r.year });
+const mapQuestion = (r) => r && ({ id: String(r.id), title: r.title, description: r.description, language: r.language, difficulty: r.difficulty, points: N(r.points), buggy_code: r.buggy_code, solution_code: r.solution_code, time_limit: N(r.time_limit, 20), status: r.status, created_at: S(r.created_at), updated_at: S(r.updated_at) });
+const mapTestCase = (r) => r && ({ id: String(r.id), question_id: String(r.question_id), input_data: r.input_data ?? '', expected_output: r.expected_output ?? '', created_at: S(r.created_at) });
+const mapAttempt = (r) => r && ({ id: String(r.id), team_id: String(r.team_id), question_id: String(r.question_id), started_at: S(r.started_at) });
+const mapSubmission = (r) => r && ({ id: String(r.id), team_id: String(r.team_id), question_id: String(r.question_id), submitted_code: r.submitted_code, passed_tests: N(r.passed_tests), total_tests: N(r.total_tests), score: N(r.score), execution_time: N(r.execution_time), status: r.status, submitted_at: S(r.submitted_at) });
+
+const fileStore = {
+  settings: async () => db.settings,
+  updateSettings: async (patch) => { Object.assign(db.settings, patch); save(); return db.settings; },
+  findAdmin: async (email) => db.users.find((u) => u.email === email && u.role === 'ADMIN') || null,
+  createAdmin: async (row) => { db.users.push(row); save(); return row; },
+  teamById: async (id) => db.teams.find((t) => t.id === id) || null,
+  teamByLogin: async (em) => db.teams.find((x) => x.login_email === em) || null,
+  teamNameTaken: async (nameLower, excludeId) => !!db.teams.find((t) => t.team_name.toLowerCase() === nameLower && t.id !== excludeId),
+  allTeams: async () => [...db.teams],
+  createTeam: async (row) => { db.teams.push(row); save(); return row; },
+  setTeamStatus: async (id, status) => { const t = db.teams.find((x) => x.id === id); if (t) { t.status = status; save(); } return t || null; },
+  setTeamName: async (id, name) => { const t = db.teams.find((x) => x.id === id); if (t) { t.team_name = name; save(); } return t || null; },
+  membersByTeam: async (tid) => db.members.filter((m) => m.team_id === tid).sort((a, b) => a.member_number - b.member_number),
+  allMemberPhones: async () => db.members.map((m) => m.phone),
+  createMembers: async (rows) => { db.members.push(...rows); save(); return rows; },
+  questionById: async (id) => db.questions.find((x) => x.id === id) || null,
+  allQuestions: async () => [...db.questions],
+  createQuestion: async (row) => { db.questions.push(row); save(); return row; },
+  updateQuestion: async (id, fields) => { const q = db.questions.find((x) => x.id === id); if (q) { Object.assign(q, fields); save(); } return q || null; },
+  deleteQuestion: async (id) => { db.questions = db.questions.filter((x) => x.id !== id); db.testcases = db.testcases.filter((t) => t.question_id !== id); save(); },
+  testCasesByQuestion: async (qid) => db.testcases.filter((t) => t.question_id === qid),
+  addTestCase: async (row) => { db.testcases.push(row); save(); return row; },
+  deleteTestCasesByQuestion: async (qid) => { db.testcases = db.testcases.filter((t) => t.question_id !== qid); save(); },
+  attemptByTeamQuestion: async (tid, qid) => db.attempts.find((a) => a.team_id === tid && a.question_id === qid) || null,
+  createAttempt: async (row) => { db.attempts.push(row); save(); return row; },
+  submissionsByTeam: async (tid) => db.submissions.filter((s) => s.team_id === tid).sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)),
+  allSubmissions: async () => [...db.submissions].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)),
+  acceptedSubmission: async (tid, qid) => db.submissions.find((s) => s.team_id === tid && s.question_id === qid && s.status === 'Accepted') || null,
+  createSubmission: async (row) => { db.submissions.push(row); save(); return row; },
+};
+const pgStore = {
+  settings: async () => mapSettings((await getPool().query('SELECT * FROM event_settings WHERE id = 1')).rows[0]),
+  updateSettings: async (patch) => {
+    const keys = Object.keys(patch);
+    if (!keys.length) return pgStore.settings();
+    const set = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    await getPool().query(`UPDATE event_settings SET ${set} WHERE id = 1`, keys.map((k) => patch[k]));
+    return pgStore.settings();
+  },
+  findAdmin: async (email) => { const r = await getPool().query(`SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND role = 'ADMIN'`, [email]); const u = r.rows[0]; return u ? ({ id: String(u.id), email: u.email, password_hash: u.password_hash, role: u.role, created_at: S(u.created_at) }) : null; },
+  createAdmin: async (row) => { await getPool().query(`INSERT INTO users (id, email, password_hash, role, created_at) VALUES ($1,$2,$3,$4,$5)`, [row.id, row.email, row.password_hash, row.role, row.created_at]); return row; },
+  teamById: async (id) => { const r = await getPool().query('SELECT * FROM teams WHERE id = $1', [id]); return mapTeam(r.rows[0]) || null; },
+  teamByLogin: async (em) => { const r = await getPool().query('SELECT * FROM teams WHERE LOWER(login_email) = LOWER($1)', [em]); return mapTeam(r.rows[0]) || null; },
+  teamNameTaken: async (nameLower, excludeId) => { const r = await getPool().query('SELECT id FROM teams WHERE LOWER(team_name) = LOWER($1) AND id <> $2', [nameLower, excludeId || '']); return r.rows.length > 0; },
+  allTeams: async () => (await getPool().query('SELECT * FROM teams ORDER BY created_at ASC')).rows.map(mapTeam),
+  createTeam: async (row) => { await getPool().query(`INSERT INTO teams (id, team_name, login_email, password_hash, college, department, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [row.id, row.team_name, row.login_email, row.password_hash, row.college, row.department, row.status, row.created_at]); return row; },
+  setTeamStatus: async (id, status) => { await getPool().query('UPDATE teams SET status = $1 WHERE id = $2', [status, id]); return pgStore.teamById(id); },
+  setTeamName: async (id, name) => { await getPool().query('UPDATE teams SET team_name = $1 WHERE id = $2', [name, id]); return pgStore.teamById(id); },
+  membersByTeam: async (tid) => (await getPool().query('SELECT * FROM team_members WHERE team_id = $1 ORDER BY member_number ASC', [tid])).rows.map(mapMember),
+  allMemberPhones: async () => (await getPool().query('SELECT phone FROM team_members')).rows.map((r) => r.phone),
+  createMembers: async (rows) => { for (const m of rows) await getPool().query(`INSERT INTO team_members (id, team_id, member_number, full_name, email, phone, college, department, year) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [m.id, m.team_id, m.member_number, m.full_name, m.email, m.phone, m.college, m.department, m.year]); return rows; },
+  questionById: async (id) => { const r = await getPool().query('SELECT * FROM questions WHERE id = $1', [id]); return mapQuestion(r.rows[0]) || null; },
+  allQuestions: async () => (await getPool().query('SELECT * FROM questions ORDER BY created_at ASC')).rows.map(mapQuestion),
+  createQuestion: async (row) => { await getPool().query(`INSERT INTO questions (id, title, description, language, difficulty, points, buggy_code, solution_code, time_limit, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [row.id, row.title, row.description, row.language, row.difficulty, row.points, row.buggy_code, row.solution_code, row.time_limit, row.status, row.created_at, row.updated_at]); return row; },
+  updateQuestion: async (id, fields) => {
+    const keys = Object.keys(fields);
+    if (keys.length) { const set = keys.map((k, i) => `${k} = $${i + 1}`).join(', '); await getPool().query(`UPDATE questions SET ${set} WHERE id = $${keys.length + 1}`, [...keys.map((k) => fields[k]), id]); }
+    return pgStore.questionById(id);
+  },
+  deleteQuestion: async (id) => { await getPool().query('DELETE FROM test_cases WHERE question_id = $1', [id]); await getPool().query('DELETE FROM questions WHERE id = $1', [id]); },
+  testCasesByQuestion: async (qid) => (await getPool().query('SELECT * FROM test_cases WHERE question_id = $1 ORDER BY created_at ASC', [qid])).rows.map(mapTestCase),
+  addTestCase: async (row) => { await getPool().query(`INSERT INTO test_cases (id, question_id, input_data, expected_output, created_at) VALUES ($1,$2,$3,$4,$5)`, [row.id, row.question_id, row.input_data, row.expected_output, row.created_at]); return row; },
+  deleteTestCasesByQuestion: async (qid) => { await getPool().query('DELETE FROM test_cases WHERE question_id = $1', [qid]); },
+  attemptByTeamQuestion: async (tid, qid) => { const r = await getPool().query('SELECT * FROM attempts WHERE team_id = $1 AND question_id = $2', [tid, qid]); return mapAttempt(r.rows[0]) || null; },
+  createAttempt: async (row) => { await getPool().query(`INSERT INTO attempts (id, team_id, question_id, started_at) VALUES ($1,$2,$3,$4)`, [row.id, row.team_id, row.question_id, row.started_at]); return row; },
+  submissionsByTeam: async (tid) => (await getPool().query('SELECT * FROM submissions WHERE team_id = $1 ORDER BY submitted_at DESC', [tid])).rows.map(mapSubmission),
+  allSubmissions: async () => (await getPool().query('SELECT * FROM submissions ORDER BY submitted_at DESC')).rows.map(mapSubmission),
+  acceptedSubmission: async (tid, qid) => { const r = await getPool().query(`SELECT * FROM submissions WHERE team_id = $1 AND question_id = $2 AND status = 'Accepted' LIMIT 1`, [tid, qid]); return mapSubmission(r.rows[0]) || null; },
+  createSubmission: async (row) => { await getPool().query(`INSERT INTO submissions (id, team_id, question_id, submitted_code, passed_tests, total_tests, score, execution_time, status, submitted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [row.id, row.team_id, row.question_id, row.submitted_code, row.passed_tests, row.total_tests, row.score, row.execution_time, row.status, row.submitted_at]); return row; },
+};
+const store = USE_PG ? pgStore : fileStore;
+
 // ---------- seed ----------
 async function seed() {
-  let changed = false;
   const adminEmail = norm(process.env.DEMO_ADMIN_EMAIL || 'admin@bughunt.com').toLowerCase();
   const adminPass = process.env.DEMO_ADMIN_PASSWORD || 'admin123';
+  if (USE_PG) {
+    await pgInit();
+    console.log('BUG HUNT storage: PostgreSQL (shared — survives refresh/cold-start/redeploy)');
+    if (!(await store.findAdmin(adminEmail))) {
+      await store.createAdmin({ id: randomUUID(), email: adminEmail, password_hash: await bcrypt.hash(adminPass, 10), role: 'ADMIN', created_at: nowISO() });
+    }
+    return;
+  }
+  console.log('BUG HUNT storage: local JSON file');
+  let changed = false;
   if (!db.users.find((u) => u.email === adminEmail)) {
     db.users.push({ id: uid('u'), email: adminEmail, password_hash: await bcrypt.hash(adminPass, 10), role: 'ADMIN', created_at: nowISO() });
     changed = true;
@@ -222,7 +365,7 @@ function mockEvaluate(question, code, testcases) {
   return testcases.map((_, i) => ({ pass: i < passCount, mock: true }));
 }
 async function evaluate(question, code) {
-  const tcs = db.testcases.filter((t) => t.question_id === question.id);
+  const tcs = await store.testCasesByQuestion(question.id);
   const lang = question.language;
   const t0 = Date.now();
   const results = [];
@@ -259,19 +402,19 @@ function calcScore(points, passed, total) {
 function verdict(passed, total) { return total > 0 && passed >= total ? 'Accepted' : passed > 0 ? 'Partial' : 'Failed'; }
 
 // sanitizers — NEVER leak solution / test I/O to teams
-const publicQuestion = (q) => ({ id: q.id, title: q.title, description: q.description, language: q.language, difficulty: q.difficulty, points: q.points, time_limit: q.time_limit, status: q.status, test_count: db.testcases.filter((t) => t.question_id === q.id).length, created_at: q.created_at });
-const teamOf = (id) => db.teams.find((t) => t.id === id);
-const membersOf = (tid) => db.members.filter((m) => m.team_id === tid).sort((a, b) => a.member_number - b.member_number);
-function bestScores(teamId) {
+const publicQuestion = async (q) => ({ id: q.id, title: q.title, description: q.description, language: q.language, difficulty: q.difficulty, points: q.points, time_limit: q.time_limit, status: q.status, test_count: (await store.testCasesByQuestion(q.id)).length, created_at: q.created_at });
+const teamOf = async (id) => store.teamById(id);
+const membersOf = async (tid) => store.membersByTeam(tid);
+async function bestScores(teamId) {
   const map = {};
-  for (const s of db.submissions.filter((x) => x.team_id === teamId)) {
+  for (const s of await store.submissionsByTeam(teamId)) {
     if (!map[s.question_id] || s.score > map[s.question_id].score) map[s.question_id] = s;
   }
   return map;
 }
-function teamStats(teamId) {
-  const subs = db.submissions.filter((s) => s.team_id === teamId);
-  const best = bestScores(teamId);
+async function teamStats(teamId) {
+  const subs = await store.submissionsByTeam(teamId);
+  const best = await bestScores(teamId);
   const solved = Object.values(best).filter((s) => s.status === 'Accepted').length;
   const attempted = new Set(subs.map((s) => s.question_id)).size;
   const totalScore = Object.values(best).reduce((a, s) => a + s.score, 0);
@@ -284,10 +427,12 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 // ----- public -----
-app.get('/api/public/settings', (req, res) => res.json({ settings: db.settings }));
-app.get('/api/public/stats', (req, res) => {
-  const pub = db.questions.filter((q) => q.status === 'published').length;
-  res.json({ teams: db.teams.filter((t) => t.status === 'active').length, questions: pub, languages: ['C', 'C++', 'Java', 'Python', 'JavaScript'] });
+app.get('/api/public/settings', async (req, res) => res.json({ settings: await store.settings() }));
+app.get('/api/public/stats', async (req, res) => {
+  const qs = await store.allQuestions();
+  const ts = await store.allTeams();
+  const pub = qs.filter((q) => q.status === 'published').length;
+  res.json({ teams: ts.filter((t) => t.status === 'active').length, questions: pub, languages: ['C', 'C++', 'Java', 'Python', 'JavaScript'] });
 });
 
 // ----- auth -----
@@ -300,7 +445,7 @@ const normPhone = (p) => String(p || '').replace(/\D/g, ''); // digits only, for
 app.post('/api/auth/register', async (req, res) => {
   try {
     const b = req.body || {};
-    if (db.settings.status === 'completed') return res.status(400).json({ error: 'Event has completed. Registration closed.' });
+    if ((await store.settings()).status === 'completed') return res.status(400).json({ error: 'Event has completed. Registration closed.' });
     const team_name = norm(b.team_name), login_email = norm(b.login_email).toLowerCase();
     const password = String(b.password || ''), confirm = String(b.confirm_password || b.confirmPassword || '');
     const m1 = b.member1 || {}, m2 = b.member2 || {};
@@ -318,18 +463,17 @@ app.post('/api/auth/register', async (req, res) => {
     // One mobile number may register only once across the whole event
     const p1 = normPhone(m1.phone), p2 = normPhone(m2.phone);
     if (p1 === p2) return res.status(400).json({ error: 'Member 1 and Member 2 cannot share the same mobile number' });
-    const usedPhones = new Set(db.members.map((m) => normPhone(m.phone)));
+    const usedPhones = new Set((await store.allMemberPhones()).map((p) => normPhone(p)));
     if (usedPhones.has(p1)) return res.status(400).json({ error: 'Member 1 mobile number is already registered with another team' });
     if (usedPhones.has(p2)) return res.status(400).json({ error: 'Member 2 mobile number is already registered with another team' });
-    if (db.teams.find((t) => t.login_email === login_email)) return res.status(400).json({ error: 'Team login email already registered' });
-    if (db.teams.find((t) => t.team_name.toLowerCase() === team_name.toLowerCase())) return res.status(400).json({ error: 'Team name already taken' });
-    const tid = uid('team');
-    db.teams.push({ id: tid, team_name, login_email, password_hash: await bcrypt.hash(password, 10), college: norm(m1.college), department: norm(m1.department), status: 'active', created_at: nowISO() });
-    db.members.push(
-      { id: uid('m'), team_id: tid, member_number: 1, full_name: norm(m1.full_name), email: norm(m1.email).toLowerCase(), phone: norm(m1.phone), college: norm(m1.college), department: norm(m1.department), year: norm(m1.year) },
-      { id: uid('m'), team_id: tid, member_number: 2, full_name: norm(m2.full_name), email: norm(m2.email).toLowerCase(), phone: norm(m2.phone), college: norm(m2.college), department: norm(m2.department), year: norm(m2.year) },
-    );
-    save();
+    if (await store.teamByLogin(login_email)) return res.status(400).json({ error: 'Team login email already registered' });
+    if (await store.teamNameTaken(team_name.toLowerCase())) return res.status(400).json({ error: 'Team name already taken' });
+    const tid = newId('team');
+    await store.createTeam({ id: tid, team_name, login_email, password_hash: await bcrypt.hash(password, 10), college: norm(m1.college), department: norm(m1.department), status: 'active', created_at: nowISO() });
+    await store.createMembers([
+      { id: newId('m'), team_id: tid, member_number: 1, full_name: norm(m1.full_name), email: norm(m1.email).toLowerCase(), phone: norm(m1.phone), college: norm(m1.college), department: norm(m1.department), year: norm(m1.year) },
+      { id: newId('m'), team_id: tid, member_number: 2, full_name: norm(m2.full_name), email: norm(m2.email).toLowerCase(), phone: norm(m2.phone), college: norm(m2.college), department: norm(m2.department), year: norm(m2.year) },
+    ]);
     return res.json({ ok: true, message: 'Team registered. Login with your team account.' });
   } catch (e) { return res.status(500).json({ error: 'Registration failed' }); }
 });
@@ -337,66 +481,69 @@ app.post('/api/auth/team-login', async (req, res) => {
   const { login_email, email, password } = req.body || {};
   const em = norm(login_email || email).toLowerCase();
   if (!teamEmailOk(em)) return res.status(401).json({ error: `Only @${TEAM_EMAIL_DOMAIN} team accounts can login here` });
-  const t = db.teams.find((x) => x.login_email === em);
+  const t = await store.teamByLogin(em);
   if (!t || !(await bcrypt.compare(String(password || ''), t.password_hash))) return res.status(401).json({ error: 'Invalid team credentials' });
   if (t.status !== 'active') return res.status(403).json({ error: 'Team account is disabled. Contact admin.' });
   return res.json({ token: signToken({ role: 'PARTICIPANT', team_id: t.id }), team: { id: t.id, team_name: t.team_name } });
 });
 app.post('/api/auth/admin-login', async (req, res) => {
   const { email, password } = req.body || {};
-  const u = db.users.find((x) => x.email === norm(email).toLowerCase() && x.role === 'ADMIN');
+  const u = await store.findAdmin(norm(email).toLowerCase());
   if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) return res.status(401).json({ error: 'Invalid admin credentials' });
   return res.json({ token: signToken({ role: 'ADMIN', admin_id: u.id, email: u.email }) });
 });
-app.get('/api/auth/me', requireAuth, (req, res) => {
+app.get('/api/auth/me', requireAuth, async (req, res) => {
   if (req.user.role === 'ADMIN') return res.json({ role: 'ADMIN', email: req.user.email });
-  const t = teamOf(req.user.team_id);
+  const t = await teamOf(req.user.team_id);
   if (!t) return res.status(401).json({ error: 'Team not found' });
-  res.json({ role: 'PARTICIPANT', team: { id: t.id, team_name: t.team_name, login_email: t.login_email, status: t.status }, members: membersOf(t.id) });
+  res.json({ role: 'PARTICIPANT', team: { id: t.id, team_name: t.team_name, login_email: t.login_email, status: t.status }, members: await membersOf(t.id) });
 });
 
 // ----- team APIs -----
-app.get('/api/team/dashboard', requireAuth, requireTeam, (req, res) => {
-  const t = teamOf(req.user.team_id);
+app.get('/api/team/dashboard', requireAuth, requireTeam, async (req, res) => {
+  const t = await teamOf(req.user.team_id);
   if (!t || t.status !== 'active') return res.status(403).json({ error: 'Team disabled' });
-  const pub = db.questions.filter((q) => q.status === 'published');
-  const st = teamStats(t.id);
-  const recent = db.submissions.filter((s) => s.team_id === t.id).sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)).slice(0, 6)
-    .map((s) => ({ ...s, question_title: (db.questions.find((q) => q.id === s.question_id) || {}).title || '—', submitted_code: undefined }));
-  res.json({ team: { team_name: t.team_name }, members: membersOf(t.id), cards: { available: pub.length, attempted: st.attempted, solved: st.solved, score: st.totalScore }, recent });
+  const qs = await store.allQuestions();
+  const byId = Object.fromEntries(qs.map((q) => [q.id, q]));
+  const pub = qs.filter((q) => q.status === 'published');
+  const st = await teamStats(t.id);
+  const recent = (await store.submissionsByTeam(t.id)).slice(0, 6)
+    .map((s) => ({ ...s, question_title: (byId[s.question_id] || {}).title || '—', submitted_code: undefined }));
+  res.json({ team: { team_name: t.team_name }, members: await membersOf(t.id), cards: { available: pub.length, attempted: st.attempted, solved: st.solved, score: st.totalScore }, recent });
 });
-app.get('/api/team/challenges', requireAuth, requireTeam, (req, res) => {
-  const best = bestScores(req.user.team_id);
+app.get('/api/team/challenges', requireAuth, requireTeam, async (req, res) => {
+  const best = await bestScores(req.user.team_id);
+  const qs = (await store.allQuestions()).filter((q) => q.status === 'published');
   res.json({
-    questions: db.questions.filter((q) => q.status === 'published').map((q) => ({ ...publicQuestion(q), best_score: best[q.id] ? best[q.id].score : 0, best_status: best[q.id] ? best[q.id].status : null })),
+    questions: await Promise.all(qs.map(async (q) => ({ ...(await publicQuestion(q)), best_score: best[q.id] ? best[q.id].score : 0, best_status: best[q.id] ? best[q.id].status : null }))),
   });
 });
-app.get('/api/team/questions/:id', requireAuth, requireTeam, (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+app.get('/api/team/questions/:id', requireAuth, requireTeam, async (req, res) => {
+  const q = await store.questionById(req.params.id);
   if (!q || q.status !== 'published') return res.status(404).json({ error: 'Challenge not found' });
-  const pq = publicQuestion(q);
+  const pq = await publicQuestion(q);
   pq.buggy_code = q.buggy_code;
-  const att = db.attempts.find((a) => a.team_id === req.user.team_id && a.question_id === q.id);
+  const att = await store.attemptByTeamQuestion(req.user.team_id, q.id);
   pq.attempt_started_at = att ? att.started_at : null;
   res.json({ question: pq });
 });
-app.post('/api/team/questions/:id/start', requireAuth, requireTeam, (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+app.post('/api/team/questions/:id/start', requireAuth, requireTeam, async (req, res) => {
+  const q = await store.questionById(req.params.id);
   if (!q || q.status !== 'published') return res.status(404).json({ error: 'Challenge not found' });
-  let att = db.attempts.find((a) => a.team_id === req.user.team_id && a.question_id === q.id);
-  if (!att) { att = { id: uid('att'), team_id: req.user.team_id, question_id: q.id, started_at: nowISO() }; db.attempts.push(att); save(); }
+  let att = await store.attemptByTeamQuestion(req.user.team_id, q.id);
+  if (!att) { att = await store.createAttempt({ id: newId('att'), team_id: req.user.team_id, question_id: q.id, started_at: nowISO() }); }
   res.json({ started_at: att.started_at, time_limit: q.time_limit });
 });
-function attemptExpired(teamId, q) {
-  const att = db.attempts.find((a) => a.team_id === teamId && a.question_id === q.id);
+async function attemptExpired(teamId, q) {
+  const att = await store.attemptByTeamQuestion(teamId, q.id);
   if (!att) return false;
   const elapsedMin = (Date.now() - new Date(att.started_at).getTime()) / 60000;
   return elapsedMin > (q.time_limit || 20) + 0.15; // ~9s grace
 }
 app.post('/api/team/questions/:id/run', requireAuth, requireTeam, async (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+  const q = await store.questionById(req.params.id);
   if (!q || q.status !== 'published') return res.status(404).json({ error: 'Challenge not found' });
-  if (attemptExpired(req.user.team_id, q)) return res.status(400).json({ error: "TIME'S UP — timer expired. Your code was auto-saved.", expired: true });
+  if (await attemptExpired(req.user.team_id, q)) return res.status(400).json({ error: "TIME'S UP — timer expired. Your code was auto-saved.", expired: true });
   const code = String(req.body.code || '');
   if (!code.trim()) return res.status(400).json({ error: 'No code to run' });
   if (code.length > 60000) return res.status(400).json({ error: 'Code too large' });
@@ -407,64 +554,72 @@ app.post('/api/team/questions/:id/run', requireAuth, requireTeam, async (req, re
   } catch (e) { res.status(500).json({ error: 'Execution failed. Try again.' }); }
 });
 app.post('/api/team/questions/:id/submit', requireAuth, requireTeam, async (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+  const q = await store.questionById(req.params.id);
   if (!q || q.status !== 'published') return res.status(404).json({ error: 'Challenge not found' });
-  if (attemptExpired(req.user.team_id, q)) return res.status(400).json({ error: "TIME'S UP — submission blocked, timer expired.", expired: true });
+  if (await attemptExpired(req.user.team_id, q)) return res.status(400).json({ error: "TIME'S UP — submission blocked, timer expired.", expired: true });
   const code = String(req.body.code || '');
   if (!code.trim()) return res.status(400).json({ error: 'No code to submit' });
   if (code.length > 60000) return res.status(400).json({ error: 'Code too large' });
-  if (!db.settings.allow_multiple_submissions) {
-    const prev = db.submissions.find((s) => s.team_id === req.user.team_id && s.question_id === q.id && s.status === 'Accepted');
+  if (!(await store.settings()).allow_multiple_submissions) {
+    const prev = await store.acceptedSubmission(req.user.team_id, q.id);
     if (prev) return res.status(400).json({ error: 'Already solved. Multiple submissions disabled.' });
   }
   try {
     const r = await evaluate(q, code);
     const score = calcScore(q.points, r.passed, r.total); // backend-calculated only
-    const sub = { id: uid('s'), team_id: req.user.team_id, question_id: q.id, submitted_code: code, passed_tests: r.passed, total_tests: r.total, score, execution_time: r.execMs || 0, status: verdict(r.passed, r.total), submitted_at: nowISO() };
-    db.submissions.push(sub); save();
+    const sub = { id: newId('s'), team_id: req.user.team_id, question_id: q.id, submitted_code: code, passed_tests: r.passed, total_tests: r.total, score, execution_time: r.execMs || 0, status: verdict(r.passed, r.total), submitted_at: nowISO() };
+    await store.createSubmission(sub);
     res.json({ ok: true, passed: r.passed, total: r.total, score, max: q.points, status: sub.status, submitted_at: sub.submitted_at, question: q.title, mock: !!r.mock });
   } catch (e) { res.status(500).json({ error: 'Submission evaluation failed' }); }
 });
-app.get('/api/team/submissions', requireAuth, requireTeam, (req, res) => {
-  const list = db.submissions.filter((s) => s.team_id === req.user.team_id).sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))
-    .map((s) => ({ id: s.id, question_id: s.question_id, question_title: (db.questions.find((q) => q.id === s.question_id) || {}).title || '—', passed_tests: s.passed_tests, total_tests: s.total_tests, score: s.score, max: (db.questions.find((q) => q.id === s.question_id) || {}).points || 0, status: s.status, submitted_at: s.submitted_at, execution_time: s.execution_time }));
+app.get('/api/team/submissions', requireAuth, requireTeam, async (req, res) => {
+  const qs = await store.allQuestions();
+  const byId = Object.fromEntries(qs.map((q) => [q.id, q]));
+  const list = (await store.submissionsByTeam(req.user.team_id))
+    .map((s) => ({ id: s.id, question_id: s.question_id, question_title: (byId[s.question_id] || {}).title || '—', passed_tests: s.passed_tests, total_tests: s.total_tests, score: s.score, max: (byId[s.question_id] || {}).points || 0, status: s.status, submitted_at: s.submitted_at, execution_time: s.execution_time }));
   res.json({ submissions: list });
 });
-app.get('/api/team/profile', requireAuth, requireTeam, (req, res) => {
-  const t = teamOf(req.user.team_id);
-  res.json({ team: { team_name: t.team_name, login_email: t.login_email, college: t.college, department: t.department, status: t.status, created_at: t.created_at }, members: membersOf(t.id), editable: !!db.settings.allow_profile_edit });
+app.get('/api/team/profile', requireAuth, requireTeam, async (req, res) => {
+  const t = await teamOf(req.user.team_id);
+  res.json({ team: { team_name: t.team_name, login_email: t.login_email, college: t.college, department: t.department, status: t.status, created_at: t.created_at }, members: await membersOf(t.id), editable: !!(await store.settings()).allow_profile_edit });
 });
-app.put('/api/team/profile', requireAuth, requireTeam, (req, res) => {
-  if (!db.settings.allow_profile_edit) return res.status(403).json({ error: 'Profile editing is disabled by admin' });
-  const t = teamOf(req.user.team_id);
+app.put('/api/team/profile', requireAuth, requireTeam, async (req, res) => {
+  if (!(await store.settings()).allow_profile_edit) return res.status(403).json({ error: 'Profile editing is disabled by admin' });
+  const t = await teamOf(req.user.team_id);
   const { team_name } = req.body || {};
   if (team_name && norm(team_name) && norm(team_name) !== t.team_name) {
-    if (db.teams.find((x) => x.id !== t.id && x.team_name.toLowerCase() === norm(team_name).toLowerCase())) return res.status(400).json({ error: 'Team name taken' });
-    t.team_name = norm(team_name);
+    if (await store.teamNameTaken(norm(team_name).toLowerCase(), t.id)) return res.status(400).json({ error: 'Team name taken' });
+    await store.setTeamName(t.id, norm(team_name));
   }
-  save(); res.json({ ok: true });
+  res.json({ ok: true });
 });
 
 // ----- admin APIs -----
-app.get('/api/admin/stats', requireAuth, requireAdmin, (req, res) => {
-  const totalPoints = db.questions.reduce((a, q) => a + q.points, 0);
-  const avg = db.teams.length ? Math.round(db.submissions.reduce((a, s) => a + s.score, 0) / Math.max(1, db.teams.length)) : 0;
-  const recent = [...db.submissions].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)).slice(0, 8).map((s) => ({
-    id: s.id, team: (teamOf(s.team_id) || {}).team_name || '—', question: (db.questions.find((q) => q.id === s.question_id) || {}).title || '—',
+app.get('/api/admin/stats', requireAuth, requireAdmin, async (req, res) => {
+  const qs = await store.allQuestions();
+  const ts = await store.allTeams();
+  const subs = await store.allSubmissions();
+  const byTeam = Object.fromEntries(ts.map((t) => [t.id, t]));
+  const byQ = Object.fromEntries(qs.map((q) => [q.id, q]));
+  const totalPoints = qs.reduce((a, q) => a + q.points, 0);
+  const avg = ts.length ? Math.round(subs.reduce((a, s) => a + s.score, 0) / Math.max(1, ts.length)) : 0;
+  const recent = subs.slice(0, 8).map((s) => ({
+    id: s.id, team: (byTeam[s.team_id] || {}).team_name || '—', question: (byQ[s.question_id] || {}).title || '—',
     score: s.score, submitted_at: s.submitted_at, status: s.status,
   }));
   res.json({
     cards: {
-      total_teams: db.teams.length, active_teams: db.teams.filter((t) => t.status === 'active').length,
-      total_questions: db.questions.length, published: db.questions.filter((q) => q.status === 'published').length,
-      submissions: db.submissions.length, points: totalPoints, avg,
+      total_teams: ts.length, active_teams: ts.filter((t) => t.status === 'active').length,
+      total_questions: qs.length, published: qs.filter((q) => q.status === 'published').length,
+      submissions: subs.length, points: totalPoints, avg,
     }, recent,
   });
 });
-app.get('/api/admin/questions', requireAuth, requireAdmin, (req, res) => {
-  res.json({ questions: db.questions.map((q) => ({ ...q, test_count: db.testcases.filter((t) => t.question_id === q.id).length })) });
+app.get('/api/admin/questions', requireAuth, requireAdmin, async (req, res) => {
+  const qs = await store.allQuestions();
+  res.json({ questions: await Promise.all(qs.map(async (q) => ({ ...q, test_count: (await store.testCasesByQuestion(q.id)).length }))) });
 });
-app.post('/api/admin/questions', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/questions', requireAuth, requireAdmin, async (req, res) => {
   const b = req.body || {};
   if (!norm(b.title)) return res.status(400).json({ error: 'Title required' });
   if (!norm(b.description)) return res.status(400).json({ error: 'Description required' });
@@ -473,71 +628,80 @@ app.post('/api/admin/questions', requireAuth, requireAdmin, (req, res) => {
   if (!(parseInt(b.points, 10) > 0)) return res.status(400).json({ error: 'Points must be > 0' });
   if (!norm(b.buggy_code)) return res.status(400).json({ error: 'Buggy code required' });
   if (!norm(b.solution_code)) return res.status(400).json({ error: 'Correct solution required' });
-  const q = { id: uid('q'), title: norm(b.title), description: String(b.description), language: b.language, difficulty: b.difficulty, points: parseInt(b.points, 10), buggy_code: String(b.buggy_code), solution_code: String(b.solution_code), time_limit: Math.max(1, parseInt(b.time_limit, 10) || 20), status: ['draft', 'published', 'disabled'].includes(b.status) ? b.status : 'draft', created_at: nowISO(), updated_at: nowISO() };
-  db.questions.push(q);
-  (Array.isArray(b.test_cases) ? b.test_cases : []).forEach((tc) => {
-    if (tc && (norm(tc.input_data) || norm(tc.expected_output))) db.testcases.push({ id: uid('t'), question_id: q.id, input_data: String(tc.input_data ?? ''), expected_output: String(tc.expected_output ?? ''), created_at: nowISO() });
-  });
-  save(); res.json({ ok: true, question: q });
+  const q = { id: newId('q'), title: norm(b.title), description: String(b.description), language: b.language, difficulty: b.difficulty, points: parseInt(b.points, 10), buggy_code: String(b.buggy_code), solution_code: String(b.solution_code), time_limit: Math.max(1, parseInt(b.time_limit, 10) || 20), status: ['draft', 'published', 'disabled'].includes(b.status) ? b.status : 'draft', created_at: nowISO(), updated_at: nowISO() };
+  await store.createQuestion(q);
+  for (const tc of (Array.isArray(b.test_cases) ? b.test_cases : [])) {
+    if (tc && (norm(tc.input_data) || norm(tc.expected_output))) await store.addTestCase({ id: newId('t'), question_id: q.id, input_data: String(tc.input_data ?? ''), expected_output: String(tc.expected_output ?? ''), created_at: nowISO() });
+  }
+  res.json({ ok: true, question: q });
 });
-app.get('/api/admin/questions/:id', requireAuth, requireAdmin, (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+app.get('/api/admin/questions/:id', requireAuth, requireAdmin, async (req, res) => {
+  const q = await store.questionById(req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
-  res.json({ question: q, test_cases: db.testcases.filter((t) => t.question_id === q.id) });
+  res.json({ question: q, test_cases: await store.testCasesByQuestion(q.id) });
 });
-app.put('/api/admin/questions/:id', requireAuth, requireAdmin, (req, res) => {
-  const q = db.questions.find((x) => x.id === req.params.id);
+app.put('/api/admin/questions/:id', requireAuth, requireAdmin, async (req, res) => {
+  const q = await store.questionById(req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
   const b = req.body || {};
-  for (const f of ['title', 'description', 'language', 'difficulty', 'buggy_code', 'solution_code', 'status']) if (b[f] !== undefined) q[f] = b[f];
-  if (b.points !== undefined) { const p = parseInt(b.points, 10); if (!(p > 0)) return res.status(400).json({ error: 'Points must be > 0' }); q.points = p; }
-  if (b.time_limit !== undefined) q.time_limit = Math.max(1, parseInt(b.time_limit, 10) || q.time_limit);
+  const fields = {};
+  for (const f of ['title', 'description', 'language', 'difficulty', 'buggy_code', 'solution_code', 'status']) if (b[f] !== undefined) fields[f] = b[f];
+  if (b.points !== undefined) { const p = parseInt(b.points, 10); if (!(p > 0)) return res.status(400).json({ error: 'Points must be > 0' }); fields.points = p; }
+  if (b.time_limit !== undefined) fields.time_limit = Math.max(1, parseInt(b.time_limit, 10) || q.time_limit);
+  fields.updated_at = nowISO();
+  const updated = await store.updateQuestion(q.id, fields);
   if (Array.isArray(b.test_cases)) {
-    db.testcases = db.testcases.filter((t) => t.question_id !== q.id);
-    b.test_cases.forEach((tc) => { db.testcases.push({ id: uid('t'), question_id: q.id, input_data: String(tc.input_data ?? ''), expected_output: String(tc.expected_output ?? ''), created_at: nowISO() }); });
+    await store.deleteTestCasesByQuestion(q.id);
+    for (const tc of b.test_cases) { await store.addTestCase({ id: newId('t'), question_id: q.id, input_data: String(tc.input_data ?? ''), expected_output: String(tc.expected_output ?? ''), created_at: nowISO() }); }
   }
-  q.updated_at = nowISO(); save(); res.json({ ok: true, question: q });
+  res.json({ ok: true, question: updated });
 });
-app.delete('/api/admin/questions/:id', requireAuth, requireAdmin, (req, res) => {
-  db.questions = db.questions.filter((x) => x.id !== req.params.id);
-  db.testcases = db.testcases.filter((t) => t.question_id !== req.params.id);
-  save(); res.json({ ok: true });
+app.delete('/api/admin/questions/:id', requireAuth, requireAdmin, async (req, res) => {
+  await store.deleteQuestion(req.params.id);
+  res.json({ ok: true });
 });
-app.get('/api/admin/teams', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/teams', requireAuth, requireAdmin, async (req, res) => {
+  const ts = await store.allTeams();
   res.json({
-    teams: db.teams.map((t) => {
-      const st = teamStats(t.id), ms = membersOf(t.id);
+    teams: await Promise.all(ts.map(async (t) => {
+      const st = await teamStats(t.id), ms = await membersOf(t.id);
       return { id: t.id, team_name: t.team_name, login_email: t.login_email, college: t.college, department: t.department, status: t.status, created_at: t.created_at, member1: ms[0] ? ms[0].full_name : '—', member2: ms[1] ? ms[1].full_name : '—', members: ms, solved: st.solved, score: st.totalScore, submissions: st.submissions };
-    }),
+    })),
   });
 });
-app.get('/api/admin/teams/:id', requireAuth, requireAdmin, (req, res) => {
-  const t = teamOf(req.params.id);
+app.get('/api/admin/teams/:id', requireAuth, requireAdmin, async (req, res) => {
+  const t = await teamOf(req.params.id);
   if (!t) return res.status(404).json({ error: 'Not found' });
-  res.json({ team: t, members: membersOf(t.id), submissions: db.submissions.filter((s) => s.team_id === t.id) });
+  res.json({ team: t, members: await membersOf(t.id), submissions: await store.submissionsByTeam(t.id) });
 });
-app.put('/api/admin/teams/:id/status', requireAuth, requireAdmin, (req, res) => {
-  const t = teamOf(req.params.id);
+app.put('/api/admin/teams/:id/status', requireAuth, requireAdmin, async (req, res) => {
+  const t = await store.setTeamStatus(req.params.id, req.body.status === 'disabled' ? 'disabled' : 'active');
   if (!t) return res.status(404).json({ error: 'Not found' });
-  t.status = req.body.status === 'disabled' ? 'disabled' : 'active'; save(); res.json({ ok: true, status: t.status });
+  res.json({ ok: true, status: t.status });
 });
-app.get('/api/admin/submissions', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/submissions', requireAuth, requireAdmin, async (req, res) => {
   const { team, question, status } = req.query;
-  let list = [...db.submissions].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at));
+  let list = await store.allSubmissions();
   if (team) list = list.filter((s) => s.team_id === team);
   if (question) list = list.filter((s) => s.question_id === question);
   if (status) list = list.filter((s) => s.status === status);
+  const ts = await store.allTeams();
+  const qs = await store.allQuestions();
+  const byTeam = Object.fromEntries(ts.map((t) => [t.id, t]));
+  const byQ = Object.fromEntries(qs.map((q) => [q.id, q]));
   res.json({
-    submissions: list.map((s) => ({ ...s, team_name: (teamOf(s.team_id) || {}).team_name || '—', question_title: (db.questions.find((q) => q.id === s.question_id) || {}).title || '—' })),
+    submissions: list.map((s) => ({ ...s, team_name: (byTeam[s.team_id] || {}).team_name || '—', question_title: (byQ[s.question_id] || {}).title || '—' })),
   });
 });
-app.get('/api/admin/leaderboard', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/leaderboard', requireAuth, requireAdmin, async (req, res) => {
   const sort = req.query.sort || 'score';
-  const rows = db.teams.map((t) => {
-    const st = teamStats(t.id), ms = membersOf(t.id);
-    const last = db.submissions.filter((s) => s.team_id === t.id).sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))[0];
+  const ts = await store.allTeams();
+  const rows = await Promise.all(ts.map(async (t) => {
+    const st = await teamStats(t.id), ms = await membersOf(t.id);
+    const subs = await store.submissionsByTeam(t.id);
+    const last = subs[0] || null;
     return { team_id: t.id, team_name: t.team_name, member1: ms[0] ? ms[0].full_name : '—', member2: ms[1] ? ms[1].full_name : '—', college: ms[0] ? ms[0].college : t.college, solved: st.solved, score: st.totalScore, submissions: st.submissions, last_submit: last ? last.submitted_at : null, status: t.status };
-  });
+  }));
   rows.sort((a, b) => {
     if (sort === 'solved' && b.solved !== a.solved) return b.solved - a.solved;
     if (sort === 'time' && (a.last_submit || '') !== (b.last_submit || '')) return (a.last_submit || '').localeCompare(b.last_submit || '');
@@ -547,13 +711,15 @@ app.get('/api/admin/leaderboard', requireAuth, requireAdmin, (req, res) => {
   });
   res.json({ leaderboard: rows.map((r, i) => ({ rank: i + 1, ...r })) });
 });
-app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => res.json({ settings: db.settings }));
-app.put('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => res.json({ settings: await store.settings() }));
+app.put('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
   const b = req.body || {};
-  for (const f of ['event_name', 'description', 'registration_start', 'registration_end', 'event_start', 'event_end', 'status']) if (b[f] !== undefined) db.settings[f] = b[f];
-  if (b.max_team_size !== undefined) db.settings.max_team_size = 2; // locked: exactly 2
-  for (const f of ['allow_multiple_submissions', 'allow_profile_edit']) if (b[f] !== undefined) db.settings[f] = !!b[f];
-  save(); res.json({ ok: true, settings: db.settings });
+  const patch = {};
+  for (const f of ['event_name', 'description', 'registration_start', 'registration_end', 'event_start', 'event_end', 'status']) if (b[f] !== undefined) patch[f] = b[f];
+  if (b.max_team_size !== undefined) patch.max_team_size = 2; // locked: exactly 2
+  for (const f of ['allow_multiple_submissions', 'allow_profile_edit']) if (b[f] !== undefined) patch[f] = !!b[f];
+  const settings = await store.updateSettings(patch);
+  res.json({ ok: true, settings });
 });
 
 // ----- static + guards -----
