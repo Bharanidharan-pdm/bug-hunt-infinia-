@@ -127,7 +127,7 @@ async function pgInit() {
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      for (const sql of PG_DDL) await pool.query(sql);
+      await pool.query(PG_DDL.join(';\n')); // single round-trip: faster cold starts (10s serverless limit)
       const s = await pool.query('SELECT * FROM event_settings WHERE id = 1');
       if (!s.rows.length) {
         await pool.query(`INSERT INTO event_settings (id, event_name, description, max_team_size, allow_multiple_submissions, allow_profile_edit, status) VALUES (1,'BUG HUNT','A competitive debugging challenge where two-member teams test their coding skills by finding and fixing bugs.',2,true,false,'live')`);
